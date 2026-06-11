@@ -1,0 +1,15 @@
+node_modules/
+.expo/
+.env
+.env.local
+dist/
+coverage/
+*.log
+apps/mobile/android/
+apps/mobile/ios/
+apps/mobile/dist-android/
+firebase-debug.log
+firestore-debug.log
+ui-debug.log
+.DS_Store
+service-account.json

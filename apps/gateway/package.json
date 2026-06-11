@@ -1,0 +1,36 @@
+{
+  "name": "@home-alarm/gateway",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev": "tsx watch src/index.ts",
+    "start": "node dist/index.js",
+    "simulator": "tsx src/simulator.ts",
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@home-alarm/contracts": "*",
+    "bcryptjs": "^3.0.2",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.7",
+    "expo-server-sdk": "^3.15.0",
+    "express": "^5.0.1",
+    "firebase-admin": "^14.0.0",
+    "helmet": "^8.0.0",
+    "mqtt": "^5.10.4",
+    "resend": "^4.1.2",
+    "twilio": "^5.4.4",
+    "zod": "^3.24.2"
+  },
+  "devDependencies": {
+    "@types/cors": "^2.8.17",
+    "@types/express": "^5.0.0",
+    "@types/node": "^22.13.10",
+    "tsx": "^4.19.3",
+    "typescript": "^5.7.3",
+    "vitest": "^3.0.8"
+  }
+}

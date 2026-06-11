@@ -1,0 +1,42 @@
+{
+  "name": "@home-alarm/mobile",
+  "version": "1.0.0",
+  "private": true,
+  "main": "expo-router/entry",
+  "scripts": {
+    "start": "expo start",
+    "android": "expo run:android",
+    "ios": "expo run:ios",
+    "prebuild": "expo prebuild",
+    "typecheck": "tsc --noEmit",
+    "lint": "expo lint"
+  },
+  "dependencies": {
+    "@expo/vector-icons": "^15.1.1",
+    "@home-alarm/contracts": "*",
+    "@react-native-async-storage/async-storage": "^2.2.0",
+    "expo": "^56.0.9",
+    "expo-constants": "^56.0.17",
+    "expo-device": "^56.0.4",
+    "expo-linking": "^56.0.7",
+    "expo-notifications": "^56.0.16",
+    "expo-router": "^56.2.9",
+    "expo-secure-store": "^56.0.4",
+    "expo-speech-recognition": "^56.0.1",
+    "expo-status-bar": "^56.0.2",
+    "firebase": "^12.14.0",
+    "react": "19.2.3",
+    "react-dom": "19.2.3",
+    "react-native": "0.85.3",
+    "react-native-safe-area-context": "~5.7.0",
+    "react-native-screens": "^4.23.0",
+    "react-native-web": "^0.21.2"
+  },
+  "devDependencies": {
+    "@types/react": "^19.2.2",
+    "babel-preset-expo": "^56.0.7",
+    "eslint": "^9.39.1",
+    "eslint-config-expo": "^56.0.4",
+    "typescript": "^5.9.3"
+  }
+}

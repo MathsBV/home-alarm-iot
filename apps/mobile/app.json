@@ -1,0 +1,49 @@
+{
+  "expo": {
+    "name": "Alarme Residencial",
+    "slug": "home-alarm-iot",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "scheme": "homealarm",
+    "userInterfaceStyle": "dark",
+    "newArchEnabled": true,
+    "android": {
+      "package": "br.edu.mackenzie.homealarm",
+      "permissions": [
+        "RECORD_AUDIO",
+        "POST_NOTIFICATIONS",
+        "android.permission.RECORD_AUDIO"
+      ]
+    },
+    "ios": {
+      "bundleIdentifier": "br.edu.mackenzie.homealarm",
+      "supportsTablet": true,
+      "infoPlist": {
+        "NSSpeechRecognitionUsageDescription": "Permita o reconhecimento de voz para controlar o alarme.",
+        "NSMicrophoneUsageDescription": "Permita o microfone para ditar comandos ao alarme."
+      }
+    },
+    "plugins": [
+      "expo-router",
+      "expo-secure-store",
+      "expo-notifications",
+      [
+        "expo-speech-recognition",
+        {
+          "microphonePermission": "Permita o microfone para ditar comandos ao alarme.",
+          "speechRecognitionPermission": "Permita o reconhecimento de voz para controlar o alarme."
+        }
+      ]
+    ],
+    "experiments": {
+      "typedRoutes": true
+    },
+    "extra": {
+      "eas": {
+        "projectId": "2cf28406-bcbf-4fee-bab0-3d68a11c9db5"
+      },
+      "router": {}
+    },
+    "owner": "matheusbvalerio"
+  }
+}

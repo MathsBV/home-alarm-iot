@@ -1,0 +1,21 @@
+{
+  "name": "home-alarm-iot",
+  "version": "1.0.0",
+  "private": true,
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "build": "npm run build --workspaces --if-present",
+    "dev:mobile": "npm run start -w @home-alarm/mobile",
+    "dev:gateway": "npm run dev -w @home-alarm/gateway",
+    "dev:simulator": "npm run simulator -w @home-alarm/gateway",
+    "lint": "npm run lint --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present",
+    "typecheck": "npm run typecheck --workspaces --if-present"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}
