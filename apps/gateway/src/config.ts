@@ -12,6 +12,7 @@ const envSchema = z.object({
   MQTT_URL: z.string().optional(),
   MQTT_USERNAME: z.string().optional(),
   MQTT_PASSWORD: z.string().optional(),
+  FIREBASE_SERVICE_ACCOUNT_BASE64: z.string().optional(),
   FIREBASE_PROJECT_ID: z.string().optional(),
   FIREBASE_CLIENT_EMAIL: z.string().optional(),
   FIREBASE_PRIVATE_KEY: z.string().optional(),
@@ -26,7 +27,8 @@ const envSchema = z.object({
 export const config = envSchema.parse(process.env);
 
 export const hasFirebaseCredentials = Boolean(
-  config.FIREBASE_PROJECT_ID &&
-    config.FIREBASE_CLIENT_EMAIL &&
-    config.FIREBASE_PRIVATE_KEY,
+  config.FIREBASE_SERVICE_ACCOUNT_BASE64 ||
+    (config.FIREBASE_PROJECT_ID &&
+      config.FIREBASE_CLIENT_EMAIL &&
+      config.FIREBASE_PRIVATE_KEY),
 );
