@@ -53,8 +53,8 @@ export function Screen({ title, subtitle, scroll = true, children, ...props }: P
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: colors.background },
   flex: { flex: 1 },
-  content: { padding: 20, paddingBottom: 120, gap: 16 },
-  header: { gap: 5, marginBottom: 6 },
-  title: { color: colors.text, fontSize: 30, lineHeight: 36, fontWeight: "800" },
-  subtitle: { color: colors.textMuted, fontSize: 15, lineHeight: 21 },
+  content: { padding: 18, paddingBottom: 120, gap: 14 },
+  header: { gap: 3, marginBottom: 4 },
+  title: { color: colors.text, fontSize: 26, lineHeight: 32, fontWeight: "900", letterSpacing: -0.3 },
+  subtitle: { color: colors.textMuted, fontSize: 13, lineHeight: 19 },
 });

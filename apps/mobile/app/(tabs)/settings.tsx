@@ -1,18 +1,26 @@
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import { Ionicons } from "@expo/vector-icons";
 import { router } from "expo-router";
-import { useState } from "react";
+import type { PropsWithChildren } from "react";
+import { useEffect, useState } from "react";
 import { Alert, StyleSheet, Text, View } from "react-native";
 import { Button } from "@/components/Button";
 import { Screen } from "@/components/Screen";
 import { useAuth } from "@/context/AuthContext";
 import { api } from "@/lib/api";
 import { demoMode } from "@/lib/firebase";
-import { registerForPushNotifications } from "@/lib/notifications";
+import { PUSH_ENABLED_KEY, registerForPushNotifications } from "@/lib/notifications";
 import { colors, radius } from "@/theme";
 
 export default function SettingsScreen() {
   const { session, homeId, getToken, logout, setHomeId } = useAuth();
   const [pushEnabled, setPushEnabled] = useState(false);
+
+  useEffect(() => {
+    void AsyncStorage.getItem(PUSH_ENABLED_KEY).then((val) => {
+      if (val === "true") setPushEnabled(true);
+    });
+  }, []);
 
   const enablePush = async () => {
     if (!homeId) return;
@@ -23,6 +31,7 @@ export default function SettingsScreen() {
         return;
       }
       await api.registerPushToken(homeId, await getToken(), token);
+      await AsyncStorage.setItem(PUSH_ENABLED_KEY, "true");
       setPushEnabled(true);
       Alert.alert("Notificações ativadas", "Este aparelho receberá alertas críticos.");
     } catch (error) {
@@ -31,13 +40,20 @@ export default function SettingsScreen() {
   };
 
   const exit = async () => {
+    await AsyncStorage.removeItem(PUSH_ENABLED_KEY);
     await logout();
     router.replace("/login");
   };
 
   return (
-    <Screen title="Ajustes" subtitle="Integrações, dados e segurança da conta.">
-      {demoMode ? <View style={styles.notice}><Ionicons name="flask" size={20} color={colors.warning} /><Text style={styles.noticeText}>Modo demonstração ativo. Use o PIN 1234.</Text></View> : null}
+    <Screen title="Ajustes" subtitle="Integrações, dados e segurança.">
+      {demoMode ? (
+        <View style={styles.demoBanner}>
+          <Ionicons name="flask" size={16} color={colors.warning} />
+          <Text style={styles.demoBannerText}>MODO DEMONSTRAÇÃO · PIN 1234</Text>
+        </View>
+      ) : null}
+
       {demoMode ? (
         <Button
           title="Simular disparo na Zona 1"
@@ -53,29 +69,101 @@ export default function SettingsScreen() {
           }}
         />
       ) : null}
-      <Setting icon="notifications" title="Notificações push" detail={pushEnabled ? "Ativadas neste aparelho" : "Requer Development Build"} />
-      <Button title={pushEnabled ? "Push ativado" : "Ativar notificações"} onPress={enablePush} disabled={pushEnabled} />
-      <Setting icon="download" title="Exportação Power BI" detail="Endpoints CSV e JSON protegidos por token Firebase" />
-      {homeId ? <Text style={styles.endpoint}>{api.exportUrl(homeId, "csv")}</Text> : null}
-      <Setting icon="person-circle" title="Conta conectada" detail={session?.email ?? "Usuário de demonstração"} />
-      <Button title="Trocar residência" variant="secondary" onPress={async () => { await setHomeId(null); router.replace("/setup"); }} />
-      <Button title="Sair da conta" variant="danger" onPress={exit} />
-      <Text style={styles.version}>Alarme Residencial · versão 1.0.0</Text>
+
+      <SectionGroup>
+        <SettingRow icon="notifications" title="Notificações push" detail={pushEnabled ? "Ativadas neste aparelho" : "Requer Development Build"} />
+        <View style={styles.groupAction}>
+          <Button title={pushEnabled ? "Push ativado" : "Ativar notificações"} onPress={enablePush} disabled={pushEnabled} />
+        </View>
+      </SectionGroup>
+
+      <SectionGroup>
+        <SettingRow icon="download" title="Exportação Power BI" detail="Endpoints CSV e JSON protegidos por token Firebase" />
+        {homeId ? <Text style={styles.endpoint}>{api.exportUrl(homeId, "csv")}</Text> : null}
+      </SectionGroup>
+
+      <SectionGroup>
+        <SettingRow icon="person-circle" title="Conta conectada" detail={session?.email ?? "Usuário de demonstração"} />
+      </SectionGroup>
+
+      <View style={styles.actions}>
+        <Button
+          title="Trocar residência"
+          variant="secondary"
+          onPress={async () => { await setHomeId(null); router.replace("/setup"); }}
+        />
+        <Button title="Sair da conta" variant="danger" onPress={exit} />
+      </View>
+
+      <Text style={styles.version}>Alarme Residencial · v1.0.0</Text>
     </Screen>
   );
 }
 
-function Setting({ icon, title, detail }: { icon: keyof typeof Ionicons.glyphMap; title: string; detail: string }) {
-  return <View style={styles.item}><View style={styles.icon}><Ionicons name={icon} size={21} color={colors.primary} /></View><View style={{ flex: 1, gap: 3 }}><Text style={styles.title}>{title}</Text><Text style={styles.detail}>{detail}</Text></View></View>;
+function SectionGroup({ children }: PropsWithChildren) {
+  return <View style={styles.group}>{children}</View>;
+}
+
+function SettingRow({ icon, title, detail }: { icon: keyof typeof Ionicons.glyphMap; title: string; detail: string }) {
+  return (
+    <View style={styles.settingRow}>
+      <View style={styles.settingIcon}>
+        <Ionicons name={icon} size={19} color={colors.primary} />
+      </View>
+      <View style={{ flex: 1 }}>
+        <Text style={styles.settingTitle}>{title}</Text>
+        <Text style={styles.settingDetail}>{detail}</Text>
+      </View>
+    </View>
+  );
 }
 
 const styles = StyleSheet.create({
-  notice: { flexDirection: "row", gap: 9, padding: 13, borderRadius: radius.medium, backgroundColor: "#3B2C13" },
-  noticeText: { color: colors.warning, fontWeight: "700", flex: 1 },
-  item: { flexDirection: "row", alignItems: "center", gap: 12, backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border, borderRadius: radius.medium, padding: 14 },
-  icon: { width: 42, height: 42, borderRadius: 14, alignItems: "center", justifyContent: "center", backgroundColor: colors.background },
-  title: { color: colors.text, fontWeight: "800" },
-  detail: { color: colors.textMuted, fontSize: 12 },
-  endpoint: { color: colors.textMuted, backgroundColor: colors.surface, borderRadius: 10, padding: 12, fontSize: 11 },
-  version: { color: colors.textMuted, textAlign: "center", fontSize: 11, marginTop: 12 },
+  demoBanner: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    padding: 11,
+    borderRadius: radius.medium,
+    backgroundColor: colors.warningSurface,
+    borderLeftWidth: 3,
+    borderLeftColor: colors.warning,
+  },
+  demoBannerText: { color: colors.warning, fontWeight: "800", fontSize: 12, letterSpacing: 0.5 },
+
+  group: {
+    backgroundColor: colors.surface,
+    borderRadius: radius.medium,
+    overflow: "hidden",
+  },
+  groupAction: { padding: 12, borderTopWidth: 1, borderTopColor: colors.border },
+
+  settingRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 13,
+    padding: 14,
+  },
+  settingIcon: {
+    width: 38,
+    height: 38,
+    borderRadius: 11,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: colors.surfaceElevated,
+  },
+  settingTitle: { color: colors.text, fontWeight: "700", fontSize: 14 },
+  settingDetail: { color: colors.textMuted, fontSize: 12, marginTop: 2 },
+
+  endpoint: {
+    color: colors.textMuted,
+    backgroundColor: colors.surfaceElevated,
+    borderRadius: radius.small,
+    padding: 12,
+    fontSize: 11,
+    marginHorizontal: 14,
+    marginBottom: 12,
+  },
+  actions: { gap: 10 },
+  version: { color: colors.textMuted, textAlign: "center", fontSize: 11, marginTop: 4 },
 });

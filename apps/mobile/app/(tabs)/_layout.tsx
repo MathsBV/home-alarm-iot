@@ -1,8 +1,44 @@
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import { Ionicons } from "@expo/vector-icons";
-import { Tabs } from "expo-router";
+import * as Notifications from "expo-notifications";
+import { router, Tabs } from "expo-router";
+import { useEffect, useRef } from "react";
+import { useAuth } from "@/context/AuthContext";
+import { api } from "@/lib/api";
+import { PUSH_ENABLED_KEY, registerForPushNotifications } from "@/lib/notifications";
 import { colors } from "@/theme";
 
 export default function TabsLayout() {
+  const { homeId, getToken } = useAuth();
+  const handledInitial = useRef(false);
+
+  useEffect(() => {
+    if (!homeId) return;
+    void (async () => {
+      try {
+        const token = await registerForPushNotifications();
+        if (!token) return;
+        await api.registerPushToken(homeId, await getToken(), token);
+        await AsyncStorage.setItem(PUSH_ENABLED_KEY, "true");
+      } catch {
+        // best-effort — não travar o app se push falhar
+      }
+    })();
+  }, [homeId, getToken]);
+
+  useEffect(() => {
+    const sub = Notifications.addNotificationResponseReceivedListener(() => {
+      router.replace("/(tabs)");
+    });
+    if (!handledInitial.current) {
+      handledInitial.current = true;
+      void Notifications.getLastNotificationResponseAsync().then((response) => {
+        if (response) router.replace("/(tabs)");
+      });
+    }
+    return () => sub.remove();
+  }, []);
+
   return (
     <Tabs
       screenOptions={{
@@ -12,11 +48,12 @@ export default function TabsLayout() {
         tabBarStyle: {
           backgroundColor: colors.surface,
           borderTopColor: colors.border,
-          height: 72,
+          borderTopWidth: 1,
+          height: 70,
           paddingTop: 8,
           paddingBottom: 10,
         },
-        tabBarLabelStyle: { fontSize: 11, fontWeight: "700" },
+        tabBarLabelStyle: { fontSize: 10, fontWeight: "700", letterSpacing: 0.4 },
       }}
     >
       <Tabs.Screen name="index" options={{ title: "Painel", tabBarIcon: ({ color, size }) => <Ionicons name="grid" size={size} color={color} /> }} />

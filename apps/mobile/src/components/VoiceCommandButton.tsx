@@ -1,7 +1,7 @@
 import type { CommandType } from "@home-alarm/contracts";
 import { Ionicons } from "@expo/vector-icons";
 import { useState } from "react";
-import { Alert, Pressable, StyleSheet, Text, View } from "react-native";
+import { Alert, Pressable, StyleSheet, Text } from "react-native";
 import { parseVoiceCommand } from "@/lib/voice";
 import { colors, radius } from "@/theme";
 
@@ -32,7 +32,7 @@ export function VoiceCommandButton({ onCommand }: Props) {
           resultSubscription.remove();
           errorSubscription.remove();
           if (command) onCommand(command);
-          else Alert.alert("Comando não reconhecido", `Você disse: “${transcript}”.`);
+          else Alert.alert("Comando não reconhecido", `Você disse: "${transcript}".`);
         },
       );
       const errorSubscription = speech.ExpoSpeechRecognitionModule.addListener(
@@ -58,41 +58,36 @@ export function VoiceCommandButton({ onCommand }: Props) {
   };
 
   return (
-    <Pressable onPress={startListening} style={({ pressed }) => [styles.button, pressed && styles.pressed]}>
-      <View style={[styles.icon, listening && styles.iconActive]}>
-        <Ionicons name={listening ? "mic" : "mic-outline"} size={22} color={colors.white} />
-      </View>
-      <View style={styles.copy}>
-        <Text style={styles.title}>{listening ? "Estou ouvindo..." : "Comando de voz"}</Text>
-        <Text style={styles.subtitle}>Diga “armar”, “desarmar” ou “silenciar”</Text>
-      </View>
-      <Ionicons name="chevron-forward" size={20} color={colors.textMuted} />
+    <Pressable
+      onPress={startListening}
+      style={({ pressed }) => [styles.btn, listening && styles.btnActive, pressed && styles.pressed]}
+    >
+      <Ionicons
+        name={listening ? "mic" : "mic-outline"}
+        size={19}
+        color={listening ? colors.warning : colors.textMuted}
+      />
+      <Text style={[styles.label, listening && styles.labelActive]}>
+        {listening ? "Ouvindo..." : "Voz"}
+      </Text>
     </Pressable>
   );
 }
 
 const styles = StyleSheet.create({
-  button: {
+  btn: {
+    flex: 1,
     flexDirection: "row",
     alignItems: "center",
-    gap: 12,
-    backgroundColor: colors.surface,
+    justifyContent: "center",
+    gap: 8,
+    height: 50,
+    borderRadius: radius.medium,
     borderWidth: 1,
     borderColor: colors.border,
-    borderRadius: radius.medium,
-    padding: 14,
   },
-  pressed: { opacity: 0.75 },
-  icon: {
-    width: 42,
-    height: 42,
-    borderRadius: 21,
-    backgroundColor: colors.primaryDark,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  iconActive: { backgroundColor: colors.danger },
-  copy: { flex: 1, gap: 2 },
-  title: { color: colors.text, fontWeight: "800" },
-  subtitle: { color: colors.textMuted, fontSize: 12 },
+  btnActive: { borderColor: `${colors.warning}60` },
+  label: { color: colors.textMuted, fontWeight: "700", fontSize: 13, letterSpacing: 0.3 },
+  labelActive: { color: colors.warning },
+  pressed: { opacity: 0.68 },
 });

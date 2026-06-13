@@ -17,15 +17,15 @@ export function Field({ label, ...props }: TextInputProps & { label: string }) {
 
 const styles = StyleSheet.create({
   wrapper: { gap: 7 },
-  label: { color: colors.textMuted, fontSize: 13, fontWeight: "700" },
+  label: { color: colors.textMuted, fontSize: 12, fontWeight: "700", letterSpacing: 0.4 },
   input: {
     minHeight: 50,
     borderRadius: radius.medium,
     borderWidth: 1,
     borderColor: colors.border,
-    backgroundColor: colors.surface,
+    backgroundColor: colors.surfaceElevated,
     color: colors.text,
-    fontSize: 16,
-    paddingHorizontal: 15,
+    fontSize: 15,
+    paddingHorizontal: 14,
   },
 });

@@ -9,13 +9,7 @@ type Props = {
   disabled?: boolean;
 };
 
-export function Button({
-  title,
-  onPress,
-  variant = "primary",
-  loading,
-  disabled,
-}: Props) {
+export function Button({ title, onPress, variant = "primary", loading, disabled }: Props) {
   return (
     <Pressable
       accessibilityRole="button"
@@ -31,7 +25,9 @@ export function Button({
       {loading ? (
         <ActivityIndicator color={colors.white} />
       ) : (
-        <Text style={styles.text}>{title}</Text>
+        <Text style={[styles.text, variant === "secondary" && styles.textSecondary]}>
+          {title}
+        </Text>
       )}
     </Pressable>
   );
@@ -39,16 +35,17 @@ export function Button({
 
 const styles = StyleSheet.create({
   base: {
-    minHeight: 50,
+    minHeight: 52,
     borderRadius: radius.medium,
-    paddingHorizontal: 18,
+    paddingHorizontal: 20,
     alignItems: "center",
     justifyContent: "center",
   },
   primary: { backgroundColor: colors.primaryDark },
-  danger: { backgroundColor: "#A82E3B" },
-  secondary: { backgroundColor: colors.surfaceElevated, borderWidth: 1, borderColor: colors.border },
-  text: { color: colors.white, fontWeight: "800", fontSize: 15 },
-  pressed: { opacity: 0.78, transform: [{ scale: 0.99 }] },
-  disabled: { opacity: 0.45 },
+  danger: { backgroundColor: "#8A1E28" },
+  secondary: { backgroundColor: "transparent", borderWidth: 1, borderColor: colors.border },
+  text: { color: colors.white, fontWeight: "700", fontSize: 15, letterSpacing: 0.3 },
+  textSecondary: { color: colors.textMuted },
+  pressed: { opacity: 0.68, transform: [{ scale: 0.985 }] },
+  disabled: { opacity: 0.35 },
 });

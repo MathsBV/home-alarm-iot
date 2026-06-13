@@ -56,11 +56,12 @@ export function PinModal({ visible, command, onClose, onSuccess }: Props) {
     <Modal visible={visible} transparent animationType="fade" onRequestClose={close}>
       <View style={styles.backdrop}>
         <Pressable style={StyleSheet.absoluteFill} onPress={close} />
-        <View style={styles.card}>
-          <Text style={styles.eyebrow}>CONFIRMAÇÃO DE SEGURANÇA</Text>
+        <View style={styles.sheet}>
+          <View style={styles.handle} />
+          <Text style={styles.eyebrow}>CONFIRMAÇÃO</Text>
           <Text style={styles.title}>{command?.label}</Text>
           <Text style={styles.description}>
-            Digite o PIN da residência para autorizar este comando.
+            Digite o PIN da residência para autorizar.
           </Text>
           <TextInput
             autoFocus
@@ -69,11 +70,11 @@ export function PinModal({ visible, command, onClose, onSuccess }: Props) {
             keyboardType="number-pad"
             secureTextEntry
             maxLength={8}
-            placeholder="PIN"
-            placeholderTextColor={colors.textMuted}
+            placeholder="• • • •"
+            placeholderTextColor={colors.border}
             style={styles.input}
           />
-          <Button title="Confirmar comando" onPress={submit} loading={loading} disabled={pin.length < 4} />
+          <Button title="Confirmar" onPress={submit} loading={loading} disabled={pin.length < 4} />
           <Button title="Cancelar" variant="secondary" onPress={close} />
         </View>
       </View>
@@ -84,30 +85,41 @@ export function PinModal({ visible, command, onClose, onSuccess }: Props) {
 const styles = StyleSheet.create({
   backdrop: {
     flex: 1,
-    backgroundColor: "rgba(0,0,0,0.72)",
-    justifyContent: "center",
-    padding: 24,
+    backgroundColor: "rgba(0,0,0,0.80)",
+    justifyContent: "flex-end",
   },
-  card: {
+  sheet: {
     backgroundColor: colors.surface,
-    borderColor: colors.border,
-    borderWidth: 1,
-    borderRadius: radius.large,
-    padding: 22,
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    padding: 24,
+    paddingBottom: 40,
     gap: 14,
   },
-  eyebrow: { color: colors.primary, fontSize: 11, fontWeight: "900", letterSpacing: 1.2 },
-  title: { color: colors.text, fontSize: 23, fontWeight: "800" },
-  description: { color: colors.textMuted, lineHeight: 21 },
+  handle: {
+    width: 36,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: colors.border,
+    alignSelf: "center",
+    marginBottom: 6,
+  },
+  eyebrow: {
+    color: colors.primary,
+    fontSize: 10,
+    fontWeight: "800",
+    letterSpacing: 1.5,
+  },
+  title: { color: colors.text, fontSize: 22, fontWeight: "800", letterSpacing: -0.2 },
+  description: { color: colors.textMuted, fontSize: 13, lineHeight: 19 },
   input: {
-    backgroundColor: colors.background,
-    borderColor: colors.border,
-    borderWidth: 1,
+    backgroundColor: colors.surfaceElevated,
     borderRadius: radius.medium,
     color: colors.text,
-    fontSize: 24,
-    letterSpacing: 8,
+    fontSize: 28,
+    letterSpacing: 12,
     textAlign: "center",
-    padding: 14,
+    paddingVertical: 16,
+    fontWeight: "700",
   },
 });

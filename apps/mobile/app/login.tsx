@@ -30,15 +30,19 @@ export default function LoginScreen() {
     <Screen scroll={false}>
       <View style={styles.page}>
         <View style={styles.brand}>
-          <View style={styles.logo}><Ionicons name="shield-checkmark" size={38} color={colors.primary} /></View>
-          <Text style={styles.title}>Casa protegida,{`\n`}onde você estiver.</Text>
-          <Text style={styles.subtitle}>Acompanhe as cinco zonas e controle sua central com segurança.</Text>
+          <View style={styles.logoWrap}>
+            <Ionicons name="shield-checkmark" size={34} color={colors.primary} />
+          </View>
+          <Text style={styles.tagline}>Casa protegida,{"\n"}onde você estiver.</Text>
+          <Text style={styles.sub}>
+            Monitore cinco zonas e controle sua central com segurança total.
+          </Text>
         </View>
         <View style={styles.form}>
           <Field label="E-mail" value={email} onChangeText={setEmail} keyboardType="email-address" placeholder="voce@email.com" />
           <Field label="Senha" value={password} onChangeText={setPassword} secureTextEntry placeholder="Sua senha" />
           <Button title="Entrar" onPress={submit} loading={loading} disabled={!email || !password} />
-          <Link href="/forgot-password" style={styles.link}>Esqueci minha senha</Link>
+          <Link href="/forgot-password" style={styles.forgotLink}>Esqueci minha senha</Link>
         </View>
       </View>
     </Screen>
@@ -46,11 +50,20 @@ export default function LoginScreen() {
 }
 
 const styles = StyleSheet.create({
-  page: { flex: 1, justifyContent: "space-between", paddingVertical: 28 },
-  brand: { gap: 18, marginTop: 30 },
-  logo: { width: 72, height: 72, borderRadius: 24, backgroundColor: colors.surface, alignItems: "center", justifyContent: "center" },
-  title: { color: colors.text, fontSize: 34, lineHeight: 40, fontWeight: "900" },
-  subtitle: { color: colors.textMuted, fontSize: 16, lineHeight: 23, maxWidth: 340 },
-  form: { gap: 14 },
-  link: { color: colors.primary, fontWeight: "700", textAlign: "center", padding: 8 },
+  page: { flex: 1, justifyContent: "space-between", paddingVertical: 24 },
+  brand: { gap: 16, marginTop: 24 },
+  logoWrap: {
+    width: 68,
+    height: 68,
+    borderRadius: 20,
+    backgroundColor: colors.surface,
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  tagline: { color: colors.text, fontSize: 34, lineHeight: 40, fontWeight: "900", letterSpacing: -0.5 },
+  sub: { color: colors.textMuted, fontSize: 15, lineHeight: 22, maxWidth: 320 },
+  form: { gap: 13 },
+  forgotLink: { color: colors.primary, fontWeight: "700", textAlign: "center", padding: 8, fontSize: 14 },
 });
