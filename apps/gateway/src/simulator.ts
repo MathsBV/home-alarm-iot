@@ -26,15 +26,17 @@ let state: AlarmState = {
   sirenActive: false,
   delaySeconds: 10,
   triggerCount: 0,
-  zones: Array.from({ length: 5 }, (_, index) => ({
-    id: index + 1,
-    name: `Zona ${index + 1}`,
-    sensorType: ["Reed switch", "PIR", "Ultrassom", "Infravermelho", "Laser"][index]!,
-    violated: false,
-  })),
+  zones: [
+    { id: 1, name: "Porta Principal",   sensorType: "Reed Switch",           violated: false },
+    { id: 2, name: "Janela",            sensorType: "Reed Switch",           violated: false },
+    { id: 3, name: "Sala",              sensorType: "PIR + Ultrassonico",    violated: false },
+    { id: 4, name: "Corredor",          sensorType: "IR",                    violated: false },
+    { id: 5, name: "Garagem",           sensorType: "Ultrassonico",          violated: false },
+  ],
   countermeasures: [
-    { id: "strobe", name: "Luz estroboscópica", active: false },
-    { id: "fog", name: "Gerador de névoa", active: false },
+    { id: "sirene",  name: "Sirene",         active: false },
+    { id: "estrobo", name: "Estrobo",        active: false },
+    { id: "cerca",   name: "Cerca Eletrica", active: false },
   ],
 };
 

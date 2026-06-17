@@ -91,6 +91,7 @@ constexpr uint8_t UART_START            = 0xA5;
 constexpr uint8_t TYPE_ZONES_FROM_ESP32 = 0x10;
 constexpr uint8_t TYPE_CMD_TO_FPGA      = 0x11;
 constexpr uint8_t TYPE_STATUS_FROM_FPGA = 0x20;
+constexpr uint8_t TYPE_DELAY_FROM_FPGA  = 0x21;
 
 constexpr uint8_t CMD_ARMAR    = 0x01;
 constexpr uint8_t CMD_DESARMAR = 0x02;
@@ -335,8 +336,13 @@ void processarByteRecebido(uint8_t byteRecebido) {
       break;
     case RX_CHECKSUM: {
       const uint8_t cs = calcularChecksum(UART_START, rxType, rxData0, rxData1);
-      if (byteRecebido == cs && rxType == TYPE_STATUS_FROM_FPGA) {
-        atualizarStatusFpga(rxData0, rxData1);
+      if (byteRecebido == cs) {
+        if (rxType == TYPE_STATUS_FROM_FPGA) {
+          atualizarStatusFpga(rxData0, rxData1);
+        } else if (rxType == TYPE_DELAY_FROM_FPGA) {
+          // rxData0 = '0' & delay_seconds[6:0] — valor dos switches SW5-SW11
+          delaySecondsConfig = rxData0 & 0x7F;
+        }
       }
       rxState = RX_WAIT_START;
       break;

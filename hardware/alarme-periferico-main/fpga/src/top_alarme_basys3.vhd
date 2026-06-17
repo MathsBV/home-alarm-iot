@@ -392,6 +392,7 @@ begin
 
             status_in     => status_uart,
             zones_latched => zones_latched,
+            delay_seconds => delay_seconds,
 
             tx_busy       => uart_tx_busy,
             tx_start      => uart_tx_start,

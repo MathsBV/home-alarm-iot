@@ -13,6 +13,7 @@ entity uart_packet_tx is
 
         status_in     : in  std_logic_vector(7 downto 0);
         zones_latched : in  std_logic_vector(4 downto 0);
+        delay_seconds : in  unsigned(6 downto 0);
 
         tx_busy       : in  std_logic;
         tx_start      : out std_logic;
@@ -22,8 +23,9 @@ end entity;
 
 architecture rtl of uart_packet_tx is
 
-    constant START_BYTE : std_logic_vector(7 downto 0) := x"A5";
+    constant START_BYTE  : std_logic_vector(7 downto 0) := x"A5";
     constant TYPE_STATUS : std_logic_vector(7 downto 0) := x"20";
+    constant TYPE_DELAY  : std_logic_vector(7 downto 0) := x"21";
 
     constant SEND_INTERVAL_CYCLES : natural := (CLK_FREQ_HZ / 1000) * SEND_INTERVAL_MS;
 
@@ -34,12 +36,13 @@ architecture rtl of uart_packet_tx is
         WAIT_BUSY_LOW
     );
 
-    type packet_t is array (0 to 4) of std_logic_vector(7 downto 0);
+    -- 10 bytes: pacote 0x20 (status, bytes 0-4) + pacote 0x21 (delay, bytes 5-9)
+    type packet_t is array (0 to 9) of std_logic_vector(7 downto 0);
 
     signal state : state_t := IDLE;
 
     signal send_counter : natural range 0 to SEND_INTERVAL_CYCLES := 0;
-    signal byte_index   : natural range 0 to 4 := 0;
+    signal byte_index   : natural range 0 to 9 := 0;
 
     signal packet : packet_t := (others => (others => '0'));
 
@@ -52,8 +55,10 @@ begin
     tx_data  <= tx_data_reg;
 
     process(clk)
-        variable zones_byte : std_logic_vector(7 downto 0);
-        variable checksum   : std_logic_vector(7 downto 0);
+        variable zones_byte  : std_logic_vector(7 downto 0);
+        variable delay_byte  : std_logic_vector(7 downto 0);
+        variable checksum_a  : std_logic_vector(7 downto 0);
+        variable checksum_b  : std_logic_vector(7 downto 0);
     begin
         if rising_edge(clk) then
 
@@ -74,14 +79,25 @@ begin
                         if send_counter = SEND_INTERVAL_CYCLES then
                             send_counter <= 0;
 
-                            zones_byte := "000" & zones_latched;
-                            checksum := START_BYTE xor TYPE_STATUS xor status_in xor zones_byte;
+                            -- Pacote A: 0xA5 | 0x20 | STATUS | ZONES | CS
+                            zones_byte  := "000" & zones_latched;
+                            checksum_a  := START_BYTE xor TYPE_STATUS xor status_in xor zones_byte;
 
                             packet(0) <= START_BYTE;
                             packet(1) <= TYPE_STATUS;
                             packet(2) <= status_in;
                             packet(3) <= zones_byte;
-                            packet(4) <= checksum;
+                            packet(4) <= checksum_a;
+
+                            -- Pacote B: 0xA5 | 0x21 | DELAY | 0x00 | CS
+                            delay_byte  := '0' & std_logic_vector(delay_seconds);
+                            checksum_b  := START_BYTE xor TYPE_DELAY xor delay_byte xor x"00";
+
+                            packet(5) <= START_BYTE;
+                            packet(6) <= TYPE_DELAY;
+                            packet(7) <= delay_byte;
+                            packet(8) <= x"00";
+                            packet(9) <= checksum_b;
 
                             byte_index <= 0;
                             state <= LOAD_BYTE;
@@ -104,7 +120,7 @@ begin
 
                     when WAIT_BUSY_LOW =>
                         if tx_busy = '0' then
-                            if byte_index = 4 then
+                            if byte_index = 9 then
                                 byte_index <= 0;
                                 state <= IDLE;
                             else

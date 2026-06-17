@@ -222,7 +222,7 @@ export default function DashboardScreen() {
         >
           <View style={[styles.counterIcon, item.active && styles.counterIconOn]}>
             <Ionicons
-              name={item.id === "strobe" ? "flash" : "cloud"}
+              name={item.id === "sirene" ? "volume-high-outline" : item.id === "estrobo" ? "flash-outline" : "shield-outline"}
               size={19}
               color={item.active ? colors.warning : colors.textMuted}
             />
