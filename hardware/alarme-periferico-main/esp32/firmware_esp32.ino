@@ -1,34 +1,42 @@
 /*
-  Projeto: Sistema de Alarme - ESP32 + FPGA Basys 3 via UART + MQTT HiveMQ Cloud
+  Projeto: Sistema de Alarme - ESP32 + FPGA Basys 3 via UART + MQTT (HiveMQ Cloud)
 
   Arquitetura:
     Sensores -> ESP32 -> UART -> FPGA/Basys 3 -> Atuadores
-    ESP32 <-> MQTT TLS 8883 <-> HiveMQ Cloud <-> Gateway Node.js <-> App Mobile
+    ESP32 <-> MQTT (HiveMQ) <-> Gateway (Render) <-> App Mobile
 
   UART:
-    Baud rate: 115200 / 8N1
-    GPIO17 TX2 -> FPGA RX / JB2
-    GPIO16 RX2 <- FPGA TX / JB1
+    Baud rate: 115200
+    Formato: 8N1
+
+  Ligações UART:
+    ESP32 GPIO17 TX2 -> FPGA UART_RX / Basys 3 JB2
+    ESP32 GPIO16 RX2 <- FPGA UART_TX / Basys 3 JB1
+    ESP32 GND        <-> GND Basys 3
 
   Sensores:
-    Zona 1: Reed switch 1               -> GPIO25
-    Zona 2: Reed switch 2               -> GPIO33
-    Zona 3: PIR + HC-SR04 nº1           -> PIR 13, TRIG 12, ECHO 14
+    Zona 1: Reed switch 1               -> GPIO33
+    Zona 2: Reed switch 2               -> GPIO25
+    Zona 3: PIR + HC-SR04 número 1      -> PIR 13, TRIG 12, ECHO 14
     Zona 4: Sensor IR                   -> GPIO27
-    Zona 5: HC-SR04 nº2                 -> TRIG 32, ECHO 35
+    Zona 5: HC-SR04 número 2            -> TRIG 32, ECHO 35
 
-  Pacotes UART:
-    ESP32->FPGA zones:  0xA5 | 0x10 | ZONES        | FLAGS | CS
-    ESP32->FPGA cmd:    0xA5 | 0x11 | CMD           | 0x00  | CS
-    FPGA ->ESP32 status:0xA5 | 0x20 | STATUS        | ZONES_LATCHED | CS
+  Pacote ESP32 -> FPGA (zonas):
+    0xA5 | 0x10 | ZONES | FLAGS | CHECKSUM
+    FLAGS: bit0=heartbeat, bit1=alertaEnviadoOk, bit2=wifiConectado
 
-  STATUS byte (FPGA->ESP32):
-    bit0=armado  bit1=disparando  bit2=sirene  bit3=estrobo
-    bit4=cerca   bit5=erro_com    bit6=em_atraso  bit7=reservado
+  Pacote ESP32 -> FPGA (comando remoto):
+    0xA5 | 0x11 | CMD | 0x00 | CHECKSUM
+    CMD: 0x01=armar, 0x02=desarmar, 0x03=reset
 
-  Bibliotecas (instalar via Library Manager):
-    PubSubClient  by Nick O'Leary
-    ArduinoJson   by Benoit Blanchon  v7+
+  Pacote FPGA -> ESP32:
+    0xA5 | 0x20 | STATUS | ZONES_LATCHED | CHECKSUM
+    STATUS: bit0=armado, bit1=disparando, bit2=sirene, bit3=estrobo,
+            bit4=cerca, bit5=erro_com, bit6=em_atraso, bit7=reservado
+
+  Bibliotecas necessárias (instalar via Arduino Library Manager):
+    - PubSubClient (Nick O'Leary)
+    - ArduinoJson v7+ (Benoit Blanchon)
 */
 
 #include <Arduino.h>
@@ -36,23 +44,36 @@
 #include <WiFiClientSecure.h>
 #include <PubSubClient.h>
 #include <ArduinoJson.h>
-#include <time.h>
+#include "time.h"
 
 // =======================================================
-// CREDENCIAIS — preencha antes de gravar
+// WiFi — preencher antes de gravar
 // =======================================================
 
-const char* WIFI_SSID     = "SEU_WIFI_SSID";
-const char* WIFI_PASSWORD = "SUA_SENHA_WIFI";
+#define WIFI_SSID     "YOUR_WIFI_SSID"
+#define WIFI_PASSWORD "YOUR_WIFI_PASSWORD"
 
-// Crie usuário "esp32" / "Esp32123" no painel HiveMQ Cloud
-const char* MQTT_HOST = "246dbd5916a940e0a718084dd7ae21f5.s1.eu.hivemq.cloud";
-const uint16_t MQTT_PORT  = 8883;
-const char* MQTT_USER     = "esp32";
-const char* MQTT_PASS     = "Esp32123";
+// =======================================================
+// MQTT (HiveMQ Cloud)
+// =======================================================
 
-// Deve coincidir com DEVICE_ID no .env do gateway
-const char* DEVICE_ID = "alarm-demo-001";
+#define MQTT_BROKER      "246dbd5916a940e0a718084dd7ae21f5.s1.eu.hivemq.cloud"
+#define MQTT_PORT        8883
+#define MQTT_USER        "esp32"
+#define MQTT_PASS        "Esp32123"
+#define DEVICE_ID        "alarm-demo-001"
+#define MQTT_BUFFER_SIZE 1280
+
+// =======================================================
+// Tópicos MQTT
+// =======================================================
+
+#define TOPIC_ROOT         "home-alarm/v1/" DEVICE_ID
+#define TOPIC_AVAILABILITY TOPIC_ROOT "/availability"
+#define TOPIC_STATE        TOPIC_ROOT "/state"
+#define TOPIC_EVENTS       TOPIC_ROOT "/events"
+#define TOPIC_COMMANDS     TOPIC_ROOT "/commands"
+#define TOPIC_CMD_ACKS     TOPIC_ROOT "/command-acks"
 
 // =======================================================
 // UART
@@ -71,30 +92,34 @@ constexpr uint8_t TYPE_ZONES_FROM_ESP32 = 0x10;
 constexpr uint8_t TYPE_CMD_TO_FPGA      = 0x11;
 constexpr uint8_t TYPE_STATUS_FROM_FPGA = 0x20;
 
-constexpr uint8_t CMD_FPGA_ARM    = 0x01;
-constexpr uint8_t CMD_FPGA_DISARM = 0x02;
-constexpr uint8_t CMD_FPGA_RESET  = 0x03;
+constexpr uint8_t CMD_ARMAR    = 0x01;
+constexpr uint8_t CMD_DESARMAR = 0x02;
+constexpr uint8_t CMD_RESET    = 0x03;
 
 // =======================================================
 // Pinos
 // =======================================================
 
-constexpr uint8_t PIN_REED_Z1      = 25;
-constexpr uint8_t PIN_REED_Z2      = 33;
-constexpr uint8_t PIN_PIR_Z3       = 13;
-constexpr uint8_t PIN_TRIG_Z3      = 12;
-constexpr uint8_t PIN_ECHO_Z3      = 14;
+constexpr uint8_t PIN_REED_Z1     = 33;
+constexpr uint8_t PIN_REED_Z2     = 25;
+
+constexpr uint8_t PIN_PIR_Z3      = 13;
+constexpr uint8_t PIN_TRIG_Z3     = 12;
+constexpr uint8_t PIN_ECHO_Z3     = 14;
+
 constexpr uint8_t PIN_SENSOR_IR_Z4 = 27;
-constexpr uint8_t PIN_TRIG_Z5      = 32;
-constexpr uint8_t PIN_ECHO_Z5      = 35;
-constexpr uint8_t LED_STATUS       = 2;
+
+constexpr uint8_t PIN_TRIG_Z5     = 32;
+constexpr uint8_t PIN_ECHO_Z5     = 35;
+
+constexpr uint8_t LED_STATUS      = 2;
 
 // =======================================================
 // Habilitação das zonas
 // =======================================================
 
-constexpr bool HABILITAR_ZONA_1 = false;
-constexpr bool HABILITAR_ZONA_2 = false;
+constexpr bool HABILITAR_ZONA_1 = true;
+constexpr bool HABILITAR_ZONA_2 = true;
 constexpr bool HABILITAR_ZONA_3 = true;
 constexpr bool HABILITAR_ZONA_4 = true;
 constexpr bool HABILITAR_ZONA_5 = true;
@@ -105,32 +130,25 @@ constexpr bool HABILITAR_ZONA_5 = true;
 
 constexpr unsigned long INTERVALO_SENSORES_MS   = 100;
 constexpr unsigned long INTERVALO_ENVIO_UART_MS = 100;
-constexpr unsigned long INTERVALO_DEBUG_MS      = 1000;
-constexpr unsigned long INTERVALO_MQTT_STATE_MS = 500;
-constexpr unsigned long INTERVALO_HEARTBEAT_MS  = 15000;
-constexpr unsigned long INTERVALO_RECONEXAO_MS  = 5000;
+constexpr unsigned long INTERVALO_DEBUG_MS      = 5000;
+constexpr unsigned long INTERVALO_ESTADO_MQTT_MS = 2000;
 
-constexpr unsigned long FILTRO_REED_MS          = 80;
-constexpr unsigned long FILTRO_IR_Z4_MS         = 200;
+constexpr unsigned long FILTRO_REED_MS  = 80;
+constexpr unsigned long FILTRO_IR_Z4_MS = 200;
+
 constexpr unsigned long TIMEOUT_ULTRASSONICO_US = 12000;
 
-constexpr float DISTANCIA_LIMITE_Z3_CM          = 8.0;
-constexpr float DISTANCIA_LIMITE_Z5_CM          = 8.0;
+constexpr float DISTANCIA_LIMITE_Z3_CM = 8.0;
+constexpr float DISTANCIA_LIMITE_Z5_CM = 8.0;
 
-constexpr bool REED_ATIVO_EM_HIGH               = true;
-constexpr bool SENSOR_IR_ATIVO_EM_HIGH          = false;
-constexpr bool ZONA3_EXIGE_PIR_E_ULTRASSONICO   = true;
+// Reed ligado entre GPIO e GND com INPUT_PULLUP: fechado=LOW, aberto=HIGH.
+constexpr bool REED_ATIVO_EM_HIGH = true;
 
-// =======================================================
-// Metadados das zonas (usados no payload MQTT)
-// =======================================================
+// IR sem objeto=HIGH, com objeto=LOW.
+constexpr bool SENSOR_IR_ATIVO_EM_HIGH = false;
 
-const char* ZONE_NAMES[5]        = {
-  "Porta Principal", "Janela Sala", "Corredor", "Sala de Estar", "Garagem"
-};
-const char* ZONE_SENSOR_TYPES[5] = {
-  "reed_switch", "reed_switch", "pir_ultrasonic", "ir", "ultrasonic"
-};
+// true: Zona 3 exige PIR E ultrassônico.
+constexpr bool ZONA3_EXIGE_PIR_E_ULTRASSONICO = true;
 
 // =======================================================
 // Estruturas
@@ -148,30 +166,37 @@ struct StatusFpga {
 };
 
 struct EstadoSensores {
-  bool  zona1       = false;
-  bool  zona2       = false;
-  bool  zona3       = false;
-  bool  zona4       = false;
-  bool  zona5       = false;
-  bool  pirZ3       = false;
-  bool  irZ4Bruto   = false;
+  bool zona1 = false;
+  bool zona2 = false;
+  bool zona3 = false;
+  bool zona4 = false;
+  bool zona5 = false;
+
+  bool  pirZ3      = false;
+  bool  irZ4Bruto  = false;
   float distanciaZ3 = 999.0;
   float distanciaZ5 = 999.0;
 };
 
-StatusFpga     statusFpga;
-EstadoSensores sensores;
+// =======================================================
+// Objetos WiFi / MQTT
+// =======================================================
+
+WiFiClientSecure wifiSecure;
+PubSubClient     mqttClient(wifiSecure);
 
 // =======================================================
 // Estado global
 // =======================================================
 
-unsigned long ultimoCicloSensores  = 0;
-unsigned long ultimoEnvioUart      = 0;
-unsigned long ultimoDebug          = 0;
-unsigned long ultimoPublishState   = 0;
-unsigned long ultimoHeartbeat      = 0;
-unsigned long ultimaTentativaMqtt  = 0;
+StatusFpga     statusFpga;
+EstadoSensores sensores;
+
+unsigned long ultimoCicloSensores = 0;
+unsigned long ultimoEnvioUart     = 0;
+unsigned long ultimoDebug         = 0;
+unsigned long ultimoEstadoMqtt    = 0;
+unsigned long ultimoReconectMqtt  = 0;
 
 uint8_t zonasAtuais = 0;
 uint8_t flagsAtuais = 0;
@@ -180,34 +205,40 @@ bool heartbeat       = false;
 bool alertaEnviadoOk = false;
 bool wifiConectado   = false;
 
-// =======================================================
-// MQTT
-// =======================================================
-
-WiFiClientSecure wifiSecure;
-PubSubClient     mqtt(wifiSecure);
-
-char topicAvailability[80];
-char topicState[80];
-char topicEvents[80];
-char topicCommands[80];
-char topicCommandAcks[80];
-char topicNotificationAcks[80];
-
-uint32_t msgSequence  = 0;
-uint32_t triggerCount = 0;
-uint32_t eventCounter = 0;
+uint32_t msgSequence      = 0;
+uint32_t triggerCount     = 0;
+uint8_t  delaySecondsConfig = 0;
 
 bool prevArmado     = false;
 bool prevDisparando = false;
+bool prevEmAtraso   = false;
 
-char lwPayload[400]; // Last Will; reconstruído em conectarMqtt()
+// Contagem regressiva da temporização
+unsigned long atrasoPendingStartMs = 0;
+
+// Estado local das contramedidas (app pode toglar independente do hardware)
+bool countermeasureActive[3] = {false, false, false};
+// índices: 0=sirene  1=estrobo  2=cerca
+
+// Comando FPGA pendente (agendado pelo callback MQTT)
+struct CmdPendente {
+  bool    ativo = false;
+  uint8_t cmd   = 0;
+  char    requestId[48] = {};
+};
+CmdPendente cmdPendente;
 
 // =======================================================
 // Parser UART
 // =======================================================
 
-enum RxState { RX_WAIT_START, RX_TYPE, RX_DATA0, RX_DATA1, RX_CHECKSUM };
+enum RxState {
+  RX_WAIT_START,
+  RX_TYPE,
+  RX_DATA0,
+  RX_DATA1,
+  RX_CHECKSUM
+};
 
 RxState rxState = RX_WAIT_START;
 uint8_t rxType  = 0;
@@ -215,7 +246,7 @@ uint8_t rxData0 = 0;
 uint8_t rxData1 = 0;
 
 // =======================================================
-// Filtro digital
+// Filtro digital reutilizável
 // =======================================================
 
 struct FiltroDigital {
@@ -224,29 +255,46 @@ struct FiltroDigital {
   unsigned long instanteMudanca  = 0;
 };
 
-FiltroDigital filtroReedZ1, filtroReedZ2, filtroIrZ4;
+FiltroDigital filtroReedZ1;
+FiltroDigital filtroReedZ2;
+FiltroDigital filtroIrZ4;
 
-bool atualizarFiltro(FiltroDigital& f, bool leitura, unsigned long ms) {
+bool atualizarFiltro(
+  FiltroDigital &filtro,
+  bool leituraAtual,
+  unsigned long tempoFiltroMs
+) {
   unsigned long agora = millis();
-  if (leitura != f.leituraAnterior) { f.leituraAnterior = leitura; f.instanteMudanca = agora; }
-  if (agora - f.instanteMudanca >= ms) f.estadoFiltrado = leitura;
-  return f.estadoFiltrado;
+  if (leituraAtual != filtro.leituraAnterior) {
+    filtro.leituraAnterior  = leituraAtual;
+    filtro.instanteMudanca  = agora;
+  }
+  if (agora - filtro.instanteMudanca >= tempoFiltroMs) {
+    filtro.estadoFiltrado = leituraAtual;
+  }
+  return filtro.estadoFiltrado;
 }
 
 // =======================================================
-// UART — envio e recepção
+// UART
 // =======================================================
 
-uint8_t calcularChecksum(uint8_t s, uint8_t t, uint8_t d0, uint8_t d1) {
-  return s ^ t ^ d0 ^ d1;
+uint8_t calcularChecksum(
+  uint8_t start,
+  uint8_t type,
+  uint8_t data0,
+  uint8_t data1
+) {
+  return start ^ type ^ data0 ^ data1;
 }
 
-void enviarPacote(uint8_t type, uint8_t d0, uint8_t d1) {
+void enviarPacote(uint8_t type, uint8_t data0, uint8_t data1) {
+  const uint8_t cs = calcularChecksum(UART_START, type, data0, data1);
   Serial2.write(UART_START);
   Serial2.write(type);
-  Serial2.write(d0);
-  Serial2.write(d1);
-  Serial2.write(calcularChecksum(UART_START, type, d0, d1));
+  Serial2.write(data0);
+  Serial2.write(data1);
+  Serial2.write(cs);
 }
 
 void enviarComandoFpga(uint8_t cmd) {
@@ -261,20 +309,35 @@ void atualizarStatusFpga(uint8_t status, uint8_t zonasLatched) {
   statusFpga.cercaHabilitada      = (status & (1 << 4)) != 0;
   statusFpga.erroComunicacaoEsp32 = (status & (1 << 5)) != 0;
   statusFpga.emAtraso             = (status & (1 << 6)) != 0;
-  for (uint8_t i = 0; i < 5; i++)
+
+  for (uint8_t i = 0; i < 5; i++) {
     statusFpga.zonasLatched[i] = (zonasLatched & (1 << i)) != 0;
+  }
+  // alertaEnviadoOk é gerenciado pela detecção de transições
 }
 
-void processarByteRecebido(uint8_t b) {
+void processarByteRecebido(uint8_t byteRecebido) {
   switch (rxState) {
-    case RX_WAIT_START: if (b == UART_START) rxState = RX_TYPE; break;
-    case RX_TYPE:  rxType  = b; rxState = RX_DATA0; break;
-    case RX_DATA0: rxData0 = b; rxState = RX_DATA1; break;
-    case RX_DATA1: rxData1 = b; rxState = RX_CHECKSUM; break;
+    case RX_WAIT_START:
+      if (byteRecebido == UART_START) rxState = RX_TYPE;
+      break;
+    case RX_TYPE:
+      rxType  = byteRecebido;
+      rxState = RX_DATA0;
+      break;
+    case RX_DATA0:
+      rxData0 = byteRecebido;
+      rxState = RX_DATA1;
+      break;
+    case RX_DATA1:
+      rxData1 = byteRecebido;
+      rxState = RX_CHECKSUM;
+      break;
     case RX_CHECKSUM: {
-      if (b == calcularChecksum(UART_START, rxType, rxData0, rxData1)
-          && rxType == TYPE_STATUS_FROM_FPGA)
+      const uint8_t cs = calcularChecksum(UART_START, rxType, rxData0, rxData1);
+      if (byteRecebido == cs && rxType == TYPE_STATUS_FROM_FPGA) {
         atualizarStatusFpga(rxData0, rxData1);
+      }
       rxState = RX_WAIT_START;
       break;
     }
@@ -283,8 +346,8 @@ void processarByteRecebido(uint8_t b) {
 
 void lerPacotesDaFpga() {
   while (Serial2.available() > 0) {
-    const int v = Serial2.read();
-    if (v >= 0) processarByteRecebido(static_cast<uint8_t>(v));
+    const int valor = Serial2.read();
+    if (valor >= 0) processarByteRecebido(static_cast<uint8_t>(valor));
   }
 }
 
@@ -292,46 +355,64 @@ void lerPacotesDaFpga() {
 // Sensores
 // =======================================================
 
-float medirDistanciaCm(uint8_t trig, uint8_t echo) {
-  digitalWrite(trig, LOW);  delayMicroseconds(2);
-  digitalWrite(trig, HIGH); delayMicroseconds(10);
-  digitalWrite(trig, LOW);
-  const unsigned long dur = pulseIn(echo, HIGH, TIMEOUT_ULTRASSONICO_US);
-  return (dur == 0) ? 999.0f : dur / 58.0f;
+float medirDistanciaCm(uint8_t trigPin, uint8_t echoPin) {
+  digitalWrite(trigPin, LOW);
+  delayMicroseconds(2);
+  digitalWrite(trigPin, HIGH);
+  delayMicroseconds(10);
+  digitalWrite(trigPin, LOW);
+
+  const unsigned long duracao = pulseIn(echoPin, HIGH, TIMEOUT_ULTRASSONICO_US);
+  if (duracao == 0) return 999.0;
+  return duracao / 58.0;
 }
 
-bool nivel(uint8_t pin, bool ativoEmHigh) {
-  return ativoEmHigh ? digitalRead(pin) == HIGH : digitalRead(pin) == LOW;
+bool interpretarNivelDigital(uint8_t pin, bool ativoEmHigh) {
+  const bool nivelHigh = digitalRead(pin) == HIGH;
+  return ativoEmHigh ? nivelHigh : !nivelHigh;
 }
 
 bool lerZona1() {
   if (!HABILITAR_ZONA_1) return false;
-  return atualizarFiltro(filtroReedZ1, nivel(PIN_REED_Z1, REED_ATIVO_EM_HIGH), FILTRO_REED_MS);
+  const bool leitura = interpretarNivelDigital(PIN_REED_Z1, REED_ATIVO_EM_HIGH);
+  return atualizarFiltro(filtroReedZ1, leitura, FILTRO_REED_MS);
 }
 
 bool lerZona2() {
   if (!HABILITAR_ZONA_2) return false;
-  return atualizarFiltro(filtroReedZ2, nivel(PIN_REED_Z2, REED_ATIVO_EM_HIGH), FILTRO_REED_MS);
+  const bool leitura = interpretarNivelDigital(PIN_REED_Z2, REED_ATIVO_EM_HIGH);
+  return atualizarFiltro(filtroReedZ2, leitura, FILTRO_REED_MS);
 }
 
 bool lerZona3() {
-  if (!HABILITAR_ZONA_3) { sensores.pirZ3 = false; sensores.distanciaZ3 = 999.0; return false; }
+  if (!HABILITAR_ZONA_3) {
+    sensores.pirZ3      = false;
+    sensores.distanciaZ3 = 999.0;
+    return false;
+  }
   sensores.pirZ3       = digitalRead(PIN_PIR_Z3) == HIGH;
   sensores.distanciaZ3 = medirDistanciaCm(PIN_TRIG_Z3, PIN_ECHO_Z3);
-  const bool ult       = sensores.distanciaZ3 <= DISTANCIA_LIMITE_Z3_CM;
-  return ZONA3_EXIGE_PIR_E_ULTRASSONICO ? (sensores.pirZ3 && ult) : (sensores.pirZ3 || ult);
+  const bool ultrassonicoAtivo = sensores.distanciaZ3 <= DISTANCIA_LIMITE_Z3_CM;
+  if (ZONA3_EXIGE_PIR_E_ULTRASSONICO) return sensores.pirZ3 && ultrassonicoAtivo;
+  return sensores.pirZ3 || ultrassonicoAtivo;
 }
 
 bool lerZona4() {
-  if (!HABILITAR_ZONA_4) { sensores.irZ4Bruto = false; return false; }
-  sensores.irZ4Bruto = digitalRead(PIN_SENSOR_IR_Z4) == HIGH;
-  return atualizarFiltro(filtroIrZ4,
-    SENSOR_IR_ATIVO_EM_HIGH ? sensores.irZ4Bruto : !sensores.irZ4Bruto,
-    FILTRO_IR_Z4_MS);
+  if (!HABILITAR_ZONA_4) {
+    sensores.irZ4Bruto = false;
+    return false;
+  }
+  const bool nivelHigh = digitalRead(PIN_SENSOR_IR_Z4) == HIGH;
+  sensores.irZ4Bruto   = nivelHigh;
+  const bool leituraInterpretada = SENSOR_IR_ATIVO_EM_HIGH ? nivelHigh : !nivelHigh;
+  return atualizarFiltro(filtroIrZ4, leituraInterpretada, FILTRO_IR_Z4_MS);
 }
 
 bool lerZona5() {
-  if (!HABILITAR_ZONA_5) { sensores.distanciaZ5 = 999.0; return false; }
+  if (!HABILITAR_ZONA_5) {
+    sensores.distanciaZ5 = 999.0;
+    return false;
+  }
   sensores.distanciaZ5 = medirDistanciaCm(PIN_TRIG_Z5, PIN_ECHO_Z5);
   return sensores.distanciaZ5 <= DISTANCIA_LIMITE_Z5_CM;
 }
@@ -340,7 +421,9 @@ void atualizarSensores() {
   sensores.zona1 = lerZona1();
   sensores.zona2 = lerZona2();
   sensores.zona3 = lerZona3();
+
   delay(5);
+
   sensores.zona4 = lerZona4();
   sensores.zona5 = lerZona5();
 
@@ -371,373 +454,363 @@ void enviarZonasParaFpga() {
 }
 
 // =======================================================
-// NTP e timestamp ISO 8601
+// MQTT helpers
 // =======================================================
 
-void sincronizarNtp() {
-  configTime(0, 0, "pool.ntp.org", "time.google.com");
-  Serial.print("[NTP] Sincronizando");
-  for (uint8_t i = 0; i < 20; i++) {
-    struct tm t;
-    if (getLocalTime(&t, 500)) {
-      Serial.printf("\n[NTP] %04d-%02d-%02dT%02d:%02d:%02dZ\n",
-        t.tm_year + 1900, t.tm_mon + 1, t.tm_mday,
-        t.tm_hour, t.tm_min, t.tm_sec);
-      return;
-    }
-    Serial.print(".");
-  }
-  Serial.println("\n[NTP] Falha — usando fallback");
+String gerarMsgId() {
+  char buf[33];
+  snprintf(buf, sizeof(buf), "%08x%08x%08x%08x",
+    (unsigned)esp_random(), (unsigned)esp_random(),
+    (unsigned)esp_random(), (unsigned)esp_random());
+  return String(buf);
 }
 
-void buildTimestamp(char* buf, size_t len) {
-  struct tm t;
-  if (getLocalTime(&t, 100)) {
-    snprintf(buf, len, "%04d-%02d-%02dT%02d:%02d:%02d.000Z",
-      t.tm_year + 1900, t.tm_mon + 1, t.tm_mday,
-      t.tm_hour, t.tm_min, t.tm_sec);
-  } else {
-    snprintf(buf, len, "1970-01-01T00:00:00.000Z");
-  }
+String getIsoTime() {
+  struct tm ti;
+  if (!getLocalTime(&ti, 0)) return "2024-01-01T00:00:00Z";
+  char buf[25];
+  strftime(buf, sizeof(buf), "%Y-%m-%dT%H:%M:%SZ", &ti);
+  return String(buf);
 }
 
-// =======================================================
-// MQTT — utilitários
-// =======================================================
-
-const char* alarmMode() {
-  if (statusFpga.disparando)                    return "triggered";
+const char* modoAlarme() {
+  if (statusFpga.disparando)              return "triggered";
   if (statusFpga.armado && statusFpga.emAtraso) return "pending";
-  if (statusFpga.armado)                        return "armed";
+  if (statusFpga.armado)                  return "armed";
   return "disarmed";
 }
 
-void buildMessageId(char* buf, size_t len) {
-  snprintf(buf, len, "esp32-%08lx-%05lu",
-    (uint32_t)(ESP.getEfuseMac() & 0xFFFFFFFFUL),
-    (unsigned long)msgSequence + 1);
-}
-
-void buildEventId(char* buf, size_t len) {
-  snprintf(buf, len, "ev-%08lx-%05lu",
-    (uint32_t)(ESP.getEfuseMac() & 0xFFFFFFFFUL),
-    (unsigned long)(++eventCounter));
-}
-
 // =======================================================
-// MQTT — publicações (payloads compatíveis com o schema)
+// Publicação MQTT
 // =======================================================
 
-void publishAvailability(bool online, const char* reason) {
-  char ts[32], msgId[64], payload[300];
-  buildTimestamp(ts, sizeof(ts));
-  buildMessageId(msgId, sizeof(msgId));
-
+void publicarDisponibilidade(bool online, const char* reason) {
   JsonDocument doc;
   doc["schemaVersion"] = 1;
-  doc["messageId"]     = msgId;
+  doc["messageId"]     = gerarMsgId();
   doc["deviceId"]      = DEVICE_ID;
-  doc["occurredAt"]    = ts;
-  doc["sequence"]      = ++msgSequence;
+  doc["occurredAt"]    = getIsoTime();
+  doc["sequence"]      = (long)msgSequence++;
   doc["online"]        = online;
   doc["reason"]        = reason;
 
-  serializeJson(doc, payload, sizeof(payload));
-  mqtt.publish(topicAvailability, payload, true);
+  char buf[256];
+  serializeJson(doc, buf, sizeof(buf));
+  mqttClient.publish(TOPIC_AVAILABILITY, buf, true);
 }
 
-void publishState() {
-  char ts[32], msgId[64], payload[1024];
-  buildTimestamp(ts, sizeof(ts));
-  buildMessageId(msgId, sizeof(msgId));
+void publicarEstado() {
+  static char buf[MQTT_BUFFER_SIZE];
 
   JsonDocument doc;
   doc["schemaVersion"] = 1;
-  doc["messageId"]     = msgId;
+  doc["messageId"]     = gerarMsgId();
   doc["deviceId"]      = DEVICE_ID;
-  doc["occurredAt"]    = ts;
-  doc["sequence"]      = ++msgSequence;
-  doc["mode"]          = alarmMode();
+  doc["occurredAt"]    = getIsoTime();
+  doc["sequence"]      = (long)msgSequence++;
+  doc["mode"]          = modoAlarme();
   doc["online"]        = true;
-  doc["sirenActive"]   = statusFpga.sireneLigada;
-  doc["delaySeconds"]  = 0;
-  doc["triggerCount"]  = triggerCount;
+  doc["sirenActive"]   = countermeasureActive[0];
+  doc["delaySeconds"]  = (int)delaySecondsConfig;
+  doc["triggerCount"]  = (long)triggerCount;
+
+  // Contagem regressiva: só inclui quando estiver temporizando
+  if (statusFpga.emAtraso && !statusFpga.disparando) {
+    unsigned long elapsedSec = (millis() - atrasoPendingStartMs) / 1000;
+    int remaining = (int)delaySecondsConfig - (int)elapsedSec;
+    doc["pendingSeconds"] = (remaining > 0) ? remaining : 0;
+  }
+
+  static const char* zonaNames[] = {
+    "Porta Principal", "Janela", "Sala", "Corredor", "Garagem"
+  };
+  static const char* zonaTypes[] = {
+    "Reed Switch", "Reed Switch", "PIR + Ultrassonico", "IR", "Ultrassonico"
+  };
 
   JsonArray zones = doc["zones"].to<JsonArray>();
-  for (uint8_t i = 0; i < 5; i++) {
-    JsonObject z  = zones.add<JsonObject>();
+  for (int i = 0; i < 5; i++) {
+    JsonObject z    = zones.add<JsonObject>();
     z["id"]         = i + 1;
-    z["name"]       = ZONE_NAMES[i];
-    z["sensorType"] = ZONE_SENSOR_TYPES[i];
+    z["name"]       = zonaNames[i];
+    z["sensorType"] = zonaTypes[i];
     z["violated"]   = statusFpga.zonasLatched[i];
   }
 
   JsonArray cm = doc["countermeasures"].to<JsonArray>();
-  JsonObject siren  = cm.add<JsonObject>();
-  siren["id"]    = "siren";
-  siren["name"]  = "Sirene";
-  siren["active"] = statusFpga.sireneLigada;
-  JsonObject strobe = cm.add<JsonObject>();
-  strobe["id"]    = "strobe";
-  strobe["name"]  = "Estrobo";
-  strobe["active"] = statusFpga.estroboLigado;
+  { JsonObject o = cm.add<JsonObject>(); o["id"]="sirene";  o["name"]="Sirene";         o["active"]=countermeasureActive[0]; }
+  { JsonObject o = cm.add<JsonObject>(); o["id"]="estrobo"; o["name"]="Estrobo";        o["active"]=countermeasureActive[1]; }
+  { JsonObject o = cm.add<JsonObject>(); o["id"]="cerca";   o["name"]="Cerca Eletrica"; o["active"]=countermeasureActive[2]; }
 
-  serializeJson(doc, payload, sizeof(payload));
-  mqtt.publish(topicState, payload, true);
+  serializeJson(doc, buf, sizeof(buf));
+  mqttClient.publish(TOPIC_STATE, buf, true);
 }
 
-void publishEvent(
+void publicarEvento(
   const char* type,
   const char* title,
+  const char* desc,
   const char* severity,
   int zoneId = -1
 ) {
-  char ts[32], msgId[64], eventId[64], payload[600];
-  buildTimestamp(ts, sizeof(ts));
-  buildMessageId(msgId, sizeof(msgId));
-  buildEventId(eventId, sizeof(eventId));
-
   JsonDocument doc;
   doc["schemaVersion"] = 1;
-  doc["messageId"]     = msgId;
+  doc["messageId"]     = gerarMsgId();
   doc["deviceId"]      = DEVICE_ID;
-  doc["occurredAt"]    = ts;
-  doc["sequence"]      = ++msgSequence;
-  doc["eventId"]       = eventId;
+  doc["occurredAt"]    = getIsoTime();
+  doc["sequence"]      = (long)msgSequence++;
+  doc["eventId"]       = gerarMsgId();
   doc["type"]          = type;
   doc["title"]         = title;
+  doc["description"]   = desc;
   doc["severity"]      = severity;
   if (zoneId > 0) doc["zoneId"] = zoneId;
 
-  serializeJson(doc, payload, sizeof(payload));
-  mqtt.publish(topicEvents, payload);
+  char buf[512];
+  serializeJson(doc, buf, sizeof(buf));
+  mqttClient.publish(TOPIC_EVENTS, buf);
 }
 
-void publishCommandAck(const char* requestId, bool accepted, const char* reason = nullptr) {
-  char ts[32], msgId[64], payload[400];
-  buildTimestamp(ts, sizeof(ts));
-  buildMessageId(msgId, sizeof(msgId));
-
+void publicarCmdAck(const char* requestId, bool accepted, const char* reason = nullptr) {
   JsonDocument doc;
   doc["schemaVersion"] = 1;
-  doc["messageId"]     = msgId;
+  doc["messageId"]     = gerarMsgId();
   doc["deviceId"]      = DEVICE_ID;
-  doc["occurredAt"]    = ts;
-  doc["sequence"]      = ++msgSequence;
+  doc["occurredAt"]    = getIsoTime();
+  doc["sequence"]      = (long)msgSequence++;
   doc["requestId"]     = requestId;
   doc["accepted"]      = accepted;
-  if (!accepted && reason != nullptr) doc["reason"] = reason;
+  if (reason) doc["reason"] = reason;
 
-  serializeJson(doc, payload, sizeof(payload));
-  mqtt.publish(topicCommandAcks, payload);
+  char buf[256];
+  serializeJson(doc, buf, sizeof(buf));
+  mqttClient.publish(TOPIC_CMD_ACKS, buf);
 }
 
 // =======================================================
-// MQTT — callback de comandos recebidos
+// MQTT callback — recebe comandos do gateway
 // =======================================================
 
 void mqttCallback(char* topic, byte* payload, unsigned int length) {
-  if (length >= 1023) return;
-
-  char buf[1024];
-  memcpy(buf, payload, length);
-  buf[length] = '\0';
-
   JsonDocument doc;
-  if (deserializeJson(doc, buf) != DeserializationError::Ok) {
-    Serial.println("[MQTT] JSON invalido");
-    return;
-  }
+  if (deserializeJson(doc, payload, length) != DeserializationError::Ok) return;
 
   const char* type      = doc["type"]      | "";
-  const char* requestId = doc["messageId"] | "unknown";
-
-  Serial.printf("[MQTT] Comando: %s\n", type);
+  const char* requestId = doc["requestId"] | "";
 
   if (strcmp(type, "ARM") == 0) {
-    if (!statusFpga.armado) {
-      enviarComandoFpga(CMD_FPGA_ARM);
-      publishCommandAck(requestId, true);
-    } else {
-      publishCommandAck(requestId, false, "already-armed");
-    }
+    cmdPendente.ativo = true;
+    cmdPendente.cmd   = CMD_ARMAR;
+    strncpy(cmdPendente.requestId, requestId, sizeof(cmdPendente.requestId) - 1);
 
-  } else if (strcmp(type, "DISARM") == 0) {
-    enviarComandoFpga(CMD_FPGA_DISARM);
-    alertaEnviadoOk = false;
-    publishCommandAck(requestId, true);
+  } else if (strcmp(type, "DISARM") == 0 || strcmp(type, "SILENCE") == 0) {
+    cmdPendente.ativo = true;
+    cmdPendente.cmd   = CMD_DESARMAR;
+    strncpy(cmdPendente.requestId, requestId, sizeof(cmdPendente.requestId) - 1);
 
-  } else if (strcmp(type, "SILENCE") == 0) {
-    enviarComandoFpga(CMD_FPGA_DISARM);
-    alertaEnviadoOk = false;
-    publishCommandAck(requestId, true);
+  } else if (strcmp(type, "SET_DELAY") == 0) {
+    int val = doc["value"] | 0;
+    delaySecondsConfig = (uint8_t)constrain(val, 0, 120);
+    if (requestId[0]) publicarCmdAck(requestId, true);
 
-  } else {
-    publishCommandAck(requestId, false, "unsupported-command");
-    return;
+  } else if (strcmp(type, "SET_COUNTERMEASURE") == 0) {
+    const char* val = doc["value"] | "";
+    if      (strcmp(val, "sirene")  == 0) countermeasureActive[0] = !countermeasureActive[0];
+    else if (strcmp(val, "estrobo") == 0) countermeasureActive[1] = !countermeasureActive[1];
+    else if (strcmp(val, "cerca")   == 0) countermeasureActive[2] = !countermeasureActive[2];
+    if (requestId[0]) publicarCmdAck(requestId, true);
+    // Publica estado imediatamente para o app ver a mudança
+    if (mqttClient.connected()) publicarEstado();
   }
-
-  delay(50);
-  publishState();
 }
 
 // =======================================================
-// MQTT — conexão e manutenção
+// Detecção de transições de estado → publica eventos MQTT
 // =======================================================
 
-bool conectarMqtt() {
-  Serial.printf("[MQTT] Conectando a %s...", MQTT_HOST);
-
-  // Reconstrói LWT com timestamp atual (pós-NTP)
-  {
-    char ts[32], msgId[64];
-    buildTimestamp(ts, sizeof(ts));
-    buildMessageId(msgId, sizeof(msgId));
-    snprintf(lwPayload, sizeof(lwPayload),
-      "{\"schemaVersion\":1,\"messageId\":\"%s\",\"deviceId\":\"%s\","
-      "\"occurredAt\":\"%s\",\"sequence\":0,\"online\":false,\"reason\":\"last-will\"}",
-      msgId, DEVICE_ID, ts);
+void verificarTransicoes() {
+  // Temporização iniciou: marca o instante para calcular segundos restantes
+  if (statusFpga.emAtraso && !prevEmAtraso) {
+    atrasoPendingStartMs = millis();
+    publicarEstado();
   }
 
-  const bool ok = mqtt.connect(
-    DEVICE_ID, MQTT_USER, MQTT_PASS,
-    topicAvailability, 1, true, lwPayload
-  );
-
-  if (ok) {
-    Serial.println(" ok!");
-    publishAvailability(true, "connected");
-    mqtt.subscribe(topicCommands);
-    mqtt.subscribe(topicNotificationAcks);
-    publishState();
-    return true;
+  // Alarme disparou: sincroniza contramedidas com o hardware e manda ACK à FPGA
+  if (statusFpga.disparando && !prevDisparando) {
+    triggerCount++;
+    alertaEnviadoOk        = true;
+    countermeasureActive[0] = statusFpga.sireneLigada;
+    countermeasureActive[1] = statusFpga.estroboLigado;
+    countermeasureActive[2] = statusFpga.cercaHabilitada;
+    publicarEvento(
+      "ALARM_TRIGGERED",
+      "Alarme Disparado",
+      "Zona(s) violada(s) detectadas.",
+      "critical"
+    );
+    publicarEstado();
   }
 
-  Serial.printf(" falhou rc=%d\n", mqtt.state());
-  return false;
-}
-
-void manterMqtt() {
-  if (!wifiConectado) return;
-
-  if (!mqtt.connected()) {
-    const unsigned long agora = millis();
-    if (agora - ultimaTentativaMqtt >= INTERVALO_RECONEXAO_MS) {
-      ultimaTentativaMqtt = agora;
-      conectarMqtt();
-    }
-    return;
+  // Alarme parou de disparar: reseta ACK e apaga contramedidas
+  if (!statusFpga.disparando && prevDisparando) {
+    alertaEnviadoOk        = false;
+    countermeasureActive[0] = false;
+    countermeasureActive[1] = false;
+    countermeasureActive[2] = false;
+    publicarEstado();
   }
 
-  mqtt.loop();
+  // Armado
+  if (statusFpga.armado && !prevArmado) {
+    publicarEvento("ALARM_ARMED", "Alarme Armado", "Sistema armado com sucesso.", "info");
+    publicarEstado();
+  }
+
+  // Desarmado: garante contramedidas apagadas
+  if (!statusFpga.armado && prevArmado) {
+    countermeasureActive[0] = false;
+    countermeasureActive[1] = false;
+    countermeasureActive[2] = false;
+    publicarEvento("ALARM_DISARMED", "Alarme Desarmado", "Sistema desarmado.", "info");
+    publicarEstado();
+  }
+
+  prevArmado     = statusFpga.armado;
+  prevDisparando = statusFpga.disparando;
+  prevEmAtraso   = statusFpga.emAtraso;
 }
 
 // =======================================================
 // WiFi
 // =======================================================
 
-void configurarWifi() {
-  Serial.printf("[WiFi] Conectando a %s", WIFI_SSID);
-  WiFi.mode(WIFI_STA);
+void conectarWifi() {
+  if (WiFi.status() == WL_CONNECTED) {
+    wifiConectado = true;
+    return;
+  }
+  wifiConectado = false;
+  Serial.print("Conectando WiFi...");
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
 
-  for (uint8_t i = 0; i < 30 && WiFi.status() != WL_CONNECTED; i++) {
+  const unsigned long inicio = millis();
+  while (WiFi.status() != WL_CONNECTED && millis() - inicio < 15000) {
+    lerPacotesDaFpga();
     delay(500);
     Serial.print(".");
   }
 
   if (WiFi.status() == WL_CONNECTED) {
     wifiConectado = true;
-    Serial.printf("\n[WiFi] IP: %s\n", WiFi.localIP().toString().c_str());
+    Serial.println(" OK: " + WiFi.localIP().toString());
+    configTime(0, 0, "pool.ntp.org");
+    // Aguarda sincronização NTP (até 5 s)
+    struct tm ti;
+    for (int i = 0; i < 10 && !getLocalTime(&ti, 0); i++) delay(500);
+    Serial.println("NTP: " + getIsoTime());
   } else {
-    wifiConectado = false;
-    Serial.println("\n[WiFi] Falha — operando sem nuvem");
+    Serial.println(" Falha WiFi.");
   }
 }
 
 // =======================================================
-// Detecção de eventos
+// MQTT conexão
 // =======================================================
 
-void detectarEventos() {
-  if (!mqtt.connected()) {
-    prevArmado = statusFpga.armado; prevDisparando = statusFpga.disparando; return;
-  }
+void conectarMqtt() {
+  if (mqttClient.connected()) return;
+  if (WiFi.status() != WL_CONNECTED) return;
 
-  if (statusFpga.disparando && !prevDisparando) {
-    triggerCount++;
-    int primeiraZona = -1;
-    for (uint8_t i = 0; i < 5; i++) {
-      if (statusFpga.zonasLatched[i]) { primeiraZona = i + 1; break; }
-    }
-    publishEvent("ALARM_TRIGGERED", "Alarme disparado", "critical", primeiraZona);
-    publishState();
-    alertaEnviadoOk = true;
-  }
+  Serial.print("Conectando MQTT...");
 
-  if (statusFpga.armado && !prevArmado) {
-    publishEvent("ALARM_ARMED", "Sistema armado", "info");
-    publishState();
-  }
+  char clientId[28];
+  snprintf(clientId, sizeof(clientId), "esp32-%08x", (unsigned)esp_random());
 
-  if (!statusFpga.armado && prevArmado) {
-    alertaEnviadoOk = false;
-    publishEvent("ALARM_DISARMED", "Sistema desarmado", "info");
-    publishState();
-  }
+  // LWT marca o dispositivo como offline se a conexão cair
+  const String lwtJson =
+    String("{\"schemaVersion\":1,\"messageId\":\"lwt\",\"deviceId\":\"" DEVICE_ID "\","
+           "\"occurredAt\":\"") +
+    getIsoTime() +
+    "\",\"sequence\":0,\"online\":false,\"reason\":\"last-will\"}";
 
-  prevArmado     = statusFpga.armado;
-  prevDisparando = statusFpga.disparando;
+  const bool ok = mqttClient.connect(
+    clientId,
+    MQTT_USER, MQTT_PASS,
+    TOPIC_AVAILABILITY, 1, true,
+    lwtJson.c_str()
+  );
+
+  if (ok) {
+    Serial.println(" OK");
+    mqttClient.subscribe(TOPIC_COMMANDS, 1);
+    publicarDisponibilidade(true, "connected");
+    publicarEstado();
+  } else {
+    Serial.printf(" Falha rc=%d\n", mqttClient.state());
+  }
 }
 
 // =======================================================
-// Debug serial
+// Debug
 // =======================================================
 
-void imprimirByteBinario(uint8_t v) {
-  for (int i = 7; i >= 0; i--) Serial.print((v >> i) & 1);
+void imprimirByteBinario(uint8_t valor) {
+  for (int i = 7; i >= 0; i--) Serial.print((valor >> i) & 1);
 }
 
-void imprimirDistancia(float d) {
-  if (d >= 999.0) Serial.print("sem resposta");
-  else { Serial.print(d, 1); Serial.print(" cm"); }
+void imprimirDistancia(float distancia) {
+  if (distancia >= 999.0) Serial.print("sem resposta");
+  else { Serial.print(distancia, 1); Serial.print(" cm"); }
 }
 
 void imprimirStatusDebug() {
   Serial.println();
-  Serial.println("======== DEBUG ESP32 ALARME ========");
-  Serial.printf("WiFi: %s\n",
-    wifiConectado ? WiFi.localIP().toString().c_str() : "desconectado");
-  Serial.printf("MQTT: %s\n", mqtt.connected() ? "conectado" : "desconectado");
-  Serial.printf("Modo: %s\n", alarmMode());
+  Serial.println("========== DEBUG ESP32 ALARME ==========");
+
   Serial.print("ZONES: 0b"); imprimirByteBinario(zonasAtuais); Serial.println();
   Serial.print("FLAGS: 0b"); imprimirByteBinario(flagsAtuais); Serial.println();
-  Serial.println("------------------------------------");
-  Serial.printf("Z1 Reed:  %s\n", !HABILITAR_ZONA_1 ? "DESATIV" : (sensores.zona1 ? "VIOLADA" : "ok"));
-  Serial.printf("Z2 Reed:  %s\n", !HABILITAR_ZONA_2 ? "DESATIV" : (sensores.zona2 ? "VIOLADA" : "ok"));
-  Serial.printf("Z3 PIR:   %s  dist: ", sensores.pirZ3 ? "ATIVO" : "inativo");
-  imprimirDistancia(sensores.distanciaZ3); Serial.printf("  -> %s\n", sensores.zona3 ? "VIOLADA" : "ok");
-  Serial.printf("Z4 IR:    GPIO27=%s  -> %s\n",
-    sensores.irZ4Bruto ? "HIGH" : "LOW", sensores.zona4 ? "VIOLADA" : "ok");
-  Serial.print("Z5 dist:  "); imprimirDistancia(sensores.distanciaZ5);
-  Serial.printf("  -> %s\n", sensores.zona5 ? "VIOLADA" : "ok");
-  Serial.println("------------------------------------");
-  Serial.printf("armado=%s  disparando=%s  em_atraso=%s\n",
-    statusFpga.armado     ? "S" : "N",
-    statusFpga.disparando ? "S" : "N",
-    statusFpga.emAtraso   ? "S" : "N");
-  Serial.printf("sirene=%s  estrobo=%s  cerca=%s  erroCom=%s\n",
-    statusFpga.sireneLigada         ? "S" : "N",
-    statusFpga.estroboLigado        ? "S" : "N",
-    statusFpga.cercaHabilitada      ? "S" : "N",
-    statusFpga.erroComunicacaoEsp32 ? "S" : "N");
+  Serial.println("----------------------------------------");
+
+  Serial.print("Zona 1 Reed GPIO33: ");
+  if (!HABILITAR_ZONA_1) Serial.println("DESATIVADA");
+  else Serial.println(sensores.zona1 ? "VIOLADA" : "normal");
+
+  Serial.print("Zona 2 Reed GPIO25: ");
+  if (!HABILITAR_ZONA_2) Serial.println("DESATIVADA");
+  else Serial.println(sensores.zona2 ? "VIOLADA" : "normal");
+
+  Serial.print("PIR Zona 3: ");    Serial.println(sensores.pirZ3 ? "ATIVO" : "inativo");
+  Serial.print("Distancia Zona 3: "); imprimirDistancia(sensores.distanciaZ3); Serial.println();
+  Serial.print("Zona 3 PIR+HC-SR04: "); Serial.println(sensores.zona3 ? "VIOLADA" : "normal");
+  Serial.print("GPIO27 bruto Zona 4: "); Serial.println(sensores.irZ4Bruto ? "HIGH" : "LOW");
+  Serial.print("Zona 4 IR filtrada: "); Serial.println(sensores.zona4 ? "VIOLADA" : "normal");
+  Serial.print("Distancia Zona 5: "); imprimirDistancia(sensores.distanciaZ5); Serial.println();
+  Serial.print("Zona 5 HC-SR04: "); Serial.println(sensores.zona5 ? "VIOLADA" : "normal");
+
+  Serial.println("----------------------------------------");
+  Serial.print("FPGA armado: ");     Serial.println(statusFpga.armado     ? "SIM" : "NAO");
+  Serial.print("FPGA disparando: "); Serial.println(statusFpga.disparando ? "SIM" : "NAO");
+  Serial.print("FPGA em atraso: ");  Serial.println(statusFpga.emAtraso   ? "SIM" : "NAO");
+  Serial.print("Sirene: ");          Serial.println(statusFpga.sireneLigada    ? "SIM" : "NAO");
+  Serial.print("Estrobo: ");         Serial.println(statusFpga.estroboLigado   ? "SIM" : "NAO");
+  Serial.print("Cerca: ");           Serial.println(statusFpga.cercaHabilitada ? "SIM" : "NAO");
+  Serial.print("Erro com FPGA: ");   Serial.println(statusFpga.erroComunicacaoEsp32 ? "SIM" : "NAO");
+
   Serial.print("Zonas travadas: ");
-  bool any = false;
-  for (uint8_t i = 0; i < 5; i++)
-    if (statusFpga.zonasLatched[i]) { Serial.printf("%d ", i + 1); any = true; }
-  if (!any) Serial.print("nenhuma");
+  bool alguma = false;
+  for (uint8_t i = 0; i < 5; i++) {
+    if (statusFpga.zonasLatched[i]) { Serial.print(i + 1); Serial.print(" "); alguma = true; }
+  }
+  if (!alguma) Serial.print("nenhuma");
   Serial.println();
-  Serial.println("====================================");
+
+  Serial.println("----------------------------------------");
+  Serial.print("WiFi: ");  Serial.println(wifiConectado ? "OK" : "desconectado");
+  Serial.print("MQTT: ");  Serial.println(mqttClient.connected() ? "OK" : "desconectado");
+  Serial.print("Modo: ");  Serial.println(modoAlarme());
+  Serial.print("Disparos: "); Serial.println(triggerCount);
+  Serial.print("Hora: ");  Serial.println(getIsoTime());
+  Serial.println("=========================================");
 }
 
 // =======================================================
@@ -750,48 +823,30 @@ void setup() {
 
   Serial2.begin(UART_BAUD, SERIAL_8N1, UART_RX_FPGA, UART_TX_FPGA);
 
-  pinMode(PIN_REED_Z1,      INPUT_PULLUP);
-  pinMode(PIN_REED_Z2,      INPUT_PULLUP);
-  pinMode(PIN_PIR_Z3,       INPUT);
-  pinMode(PIN_TRIG_Z3,      OUTPUT);
-  pinMode(PIN_ECHO_Z3,      INPUT);
-  pinMode(PIN_SENSOR_IR_Z4, INPUT_PULLUP);
-  pinMode(PIN_TRIG_Z5,      OUTPUT);
-  pinMode(PIN_ECHO_Z5,      INPUT);
-  pinMode(LED_STATUS,       OUTPUT);
+  pinMode(PIN_REED_Z1,       INPUT_PULLUP);
+  pinMode(PIN_REED_Z2,       INPUT_PULLUP);
+  pinMode(PIN_PIR_Z3,        INPUT);
+  pinMode(PIN_TRIG_Z3,       OUTPUT);
+  pinMode(PIN_ECHO_Z3,       INPUT);
+  pinMode(PIN_SENSOR_IR_Z4,  INPUT_PULLUP);
+  pinMode(PIN_TRIG_Z5,       OUTPUT);
+  pinMode(PIN_ECHO_Z5,       INPUT);
+  pinMode(LED_STATUS,        OUTPUT);
 
   digitalWrite(PIN_TRIG_Z3, LOW);
   digitalWrite(PIN_TRIG_Z5, LOW);
   digitalWrite(LED_STATUS,  LOW);
 
-  Serial.println("\nESP32 — Alarme UART + MQTT");
-  Serial.printf("Device: %s\n", DEVICE_ID);
+  Serial.println();
+  Serial.println("ESP32 iniciado - Alarme UART + MQTT");
 
-  snprintf(topicAvailability,     sizeof(topicAvailability),
-    "home-alarm/v1/%s/availability",     DEVICE_ID);
-  snprintf(topicState,            sizeof(topicState),
-    "home-alarm/v1/%s/state",            DEVICE_ID);
-  snprintf(topicEvents,           sizeof(topicEvents),
-    "home-alarm/v1/%s/events",           DEVICE_ID);
-  snprintf(topicCommands,         sizeof(topicCommands),
-    "home-alarm/v1/%s/commands",         DEVICE_ID);
-  snprintf(topicCommandAcks,      sizeof(topicCommandAcks),
-    "home-alarm/v1/%s/command-acks",     DEVICE_ID);
-  snprintf(topicNotificationAcks, sizeof(topicNotificationAcks),
-    "home-alarm/v1/%s/notification-acks",DEVICE_ID);
-
-  configurarWifi();
-
-  if (wifiConectado) sincronizarNtp();
-
-  // TLS sem verificação de certificado (adequado para demonstração)
   wifiSecure.setInsecure();
-  mqtt.setServer(MQTT_HOST, MQTT_PORT);
-  mqtt.setBufferSize(1024);
-  mqtt.setKeepAlive(30);
-  mqtt.setCallback(mqttCallback);
+  mqttClient.setServer(MQTT_BROKER, MQTT_PORT);
+  mqttClient.setCallback(mqttCallback);
+  mqttClient.setBufferSize(MQTT_BUFFER_SIZE);
 
-  if (wifiConectado) conectarMqtt();
+  conectarWifi();
+  conectarMqtt();
 }
 
 // =======================================================
@@ -814,20 +869,44 @@ void loop() {
     digitalWrite(LED_STATUS, !digitalRead(LED_STATUS));
   }
 
-  const bool wifiAtual = (WiFi.status() == WL_CONNECTED);
-  if (wifiAtual != wifiConectado) wifiConectado = wifiAtual;
-
-  manterMqtt();
-  detectarEventos();
-
-  if (mqtt.connected() && agora - ultimoPublishState >= INTERVALO_MQTT_STATE_MS) {
-    ultimoPublishState = agora;
-    publishState();
+  // Manter WiFi
+  if (WiFi.status() != WL_CONNECTED) {
+    wifiConectado = false;
+    if (agora - ultimoReconectMqtt >= 30000) {
+      ultimoReconectMqtt = agora;
+      conectarWifi();
+    }
   }
 
-  if (mqtt.connected() && agora - ultimoHeartbeat >= INTERVALO_HEARTBEAT_MS) {
-    ultimoHeartbeat = agora;
-    publishAvailability(true, "heartbeat");
+  // Manter MQTT
+  if (wifiConectado) {
+    if (!mqttClient.connected() && agora - ultimoReconectMqtt >= 5000) {
+      ultimoReconectMqtt = agora;
+      conectarMqtt();
+    }
+
+    if (mqttClient.connected()) {
+      mqttClient.loop();
+
+      // Processar comando FPGA pendente (agendado pelo callback)
+      if (cmdPendente.ativo) {
+        cmdPendente.ativo = false;
+        enviarComandoFpga(cmdPendente.cmd);
+        if (cmdPendente.requestId[0]) {
+          publicarCmdAck(cmdPendente.requestId, true);
+          memset(cmdPendente.requestId, 0, sizeof(cmdPendente.requestId));
+        }
+      }
+
+      // Detectar transições e publicar eventos
+      verificarTransicoes();
+
+      // Publicar estado periodicamente
+      if (agora - ultimoEstadoMqtt >= INTERVALO_ESTADO_MQTT_MS) {
+        ultimoEstadoMqtt = agora;
+        publicarEstado();
+      }
+    }
   }
 
   if (agora - ultimoDebug >= INTERVALO_DEBUG_MS) {

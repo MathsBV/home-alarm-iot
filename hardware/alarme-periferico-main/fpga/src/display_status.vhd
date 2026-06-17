@@ -22,6 +22,6 @@ begin
         end case;
     end process;
 
-    an <= "1110"; -- apenas o dígito da direita habilitado
+    an <= "1110"; -- apenas o dÃ­gito da direita habilitado
     dp <= '1';    -- ponto decimal desligado
 end architecture;

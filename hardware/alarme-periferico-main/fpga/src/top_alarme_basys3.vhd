@@ -26,6 +26,13 @@ entity top_alarme_basys3 is
         -- JA(2): cerca/contencao demonstrativa
         JA   : out std_logic_vector(2 downto 0);
 
+        -- Botao externo de desarme no JA4 fisico.
+        -- Ligacao: JA4 -> botao -> GND.
+        -- No XDC usar PULLUP true:
+        -- solto    = '1'
+        -- apertado = '0'
+        ja4_botao_secreto_n : in std_logic;
+
         -- UART com ESP32
         -- ESP32 GPIO17 TX2 -> uart_rx_esp32
         -- ESP32 GPIO16 RX2 <- uart_tx_esp32
@@ -36,11 +43,13 @@ end entity;
 
 architecture structural of top_alarme_basys3 is
 
-    signal reset_pulse      : std_logic;
-    signal arm_pulse        : std_logic;
-    signal ack_manual_pulse : std_logic;
-    signal ack_event_pulse  : std_logic;
-    signal tick             : std_logic;
+    signal reset_pulse         : std_logic;
+    signal arm_pulse           : std_logic;
+    signal ack_manual_pulse    : std_logic;
+    signal botao_secreto_pulse : std_logic;
+    signal botao_secreto_ativo : std_logic;
+    signal ack_event_pulse     : std_logic;
+    signal tick                : std_logic;
 
     signal zones_uart       : std_logic_vector(4 downto 0);
     signal zones_latched    : std_logic_vector(4 downto 0);
@@ -56,6 +65,10 @@ architecture structural of top_alarme_basys3 is
     signal sinal_esp32      : std_logic;
     signal reset_esp32      : std_logic;
     signal em_atraso        : std_logic;
+
+    -- Sinal lógico real da cerca:
+    -- Só fica ativo quando o alarme estiver disparando.
+    signal cerca_ativa_segura : std_logic;
 
     signal ack_indicator    : std_logic := '0';
 
@@ -105,6 +118,20 @@ begin
     -- SW0 ate SW4 nao sao mais sensores. Agora as zonas vem do ESP32 via UART.
     --------------------------------------------------------------------------
     delay_seconds <= unsigned(sw(11 downto 5));
+
+    --------------------------------------------------------------------------
+    -- Botao externo de desarme ativo em nivel baixo.
+    -- Entrada fisica: ja4_botao_secreto_n = '1' solto, '0' apertado.
+    -- Sinal interno: botao_secreto_ativo = '1' quando apertado.
+    --------------------------------------------------------------------------
+    botao_secreto_ativo <= not ja4_botao_secreto_n;
+
+    --------------------------------------------------------------------------
+    -- Cerca segura:
+    -- O relé/cerca só deve ligar quando o alarme estiver disparando.
+    -- Não liga apenas por estar armado.
+    --------------------------------------------------------------------------
+    cerca_ativa_segura <= disparando;
 
     --------------------------------------------------------------------------
     -- Gerador de tick de 1 segundo.
@@ -161,6 +188,22 @@ begin
             rst       => reset_pulse,
             btn_async => btnR,
             pulse     => ack_manual_pulse,
+            level     => open
+        );
+
+    --------------------------------------------------------------------------
+    -- Botao externo de desarme no JA4.
+    -- Com PULLUP true no XDC, o botao deve fechar o pino JA4 para GND.
+    --------------------------------------------------------------------------
+    U_BTN_DESARME_EXTERNO : entity work.debounce_onepulse
+        generic map (
+            STABLE_CYCLES => BTN_STABLE_CYCLES
+        )
+        port map (
+            clk       => clk,
+            rst       => reset_pulse,
+            btn_async => botao_secreto_ativo,
+            pulse     => botao_secreto_pulse,
             level     => open
         );
 
@@ -247,29 +290,30 @@ begin
             WATCHDOG_SECONDS   => 5
         )
         port map (
-            clk              => clk,
-            rst              => reset_pulse,
-            tick_1s          => tick,
+            clk                 => clk,
+            rst                 => reset_pulse,
+            tick_1s             => tick,
 
-            arm_toggle_pulse => arm_pulse,
-            cmd_arm_i        => cmd_armar_uart,
-            cmd_disarm_i     => cmd_desarmar_uart,
-            ack_esp32_pulse  => ack_event_pulse,
+            arm_toggle_pulse    => arm_pulse,
+            cmd_arm_i           => cmd_armar_uart,
+            cmd_disarm_i        => cmd_desarmar_uart,
+            botao_secreto_pulse => botao_secreto_pulse,
+            ack_esp32_pulse     => ack_event_pulse,
 
-            zones_in         => zones_uart,
-            delay_seconds_in => delay_seconds,
+            zones_in            => zones_uart,
+            delay_seconds_in    => delay_seconds,
 
-            zones_latched_o  => zones_latched,
-            status_code_o    => status_code,
+            zones_latched_o     => zones_latched,
+            status_code_o       => status_code,
 
-            armado_o         => armado,
-            disparando_o     => disparando,
-            em_atraso_o      => em_atraso,
-            sirene_o         => sirene,
-            fumaca_o         => estrobo,
-            cerca_simulada_o => contencao_demo,
-            sinal_esp32_o    => sinal_esp32,
-            reset_esp32_o    => reset_esp32
+            armado_o            => armado,
+            disparando_o        => disparando,
+            sirene_o            => sirene,
+            fumaca_o            => estrobo,
+            cerca_simulada_o    => contencao_demo,
+            sinal_esp32_o       => sinal_esp32,
+            reset_esp32_o       => reset_esp32,
+            em_atraso_o         => em_atraso
         );
 
     --------------------------------------------------------------------------
@@ -304,14 +348,14 @@ begin
     -- bit 1 = disparando
     -- bit 2 = sirene ligada
     -- bit 3 = estrobo ligado
-    -- bit 4 = cerca habilitada
+    -- bit 4 = cerca ativa de verdade
     -- bit 5 = erro/comunicacao ESP32 perdida
     --------------------------------------------------------------------------
     status_uart(0) <= armado;
     status_uart(1) <= disparando;
     status_uart(2) <= sirene;
     status_uart(3) <= estrobo;
-    status_uart(4) <= contencao_demo;
+    status_uart(4) <= cerca_ativa_segura;
     status_uart(5) <= esp32_timeout;
     status_uart(6) <= em_atraso;
     status_uart(7) <= '0';
@@ -362,7 +406,7 @@ begin
     led(6)          <= disparando;
     led(7)          <= sirene;
     led(8)          <= estrobo;
-    led(9)          <= contencao_demo;
+    led(9)          <= cerca_ativa_segura;
     led(10)         <= esp32_timeout or reset_esp32;
     led(11)         <= ack_indicator;
 
@@ -371,6 +415,22 @@ begin
     --------------------------------------------------------------------------
     JA(0) <= sirene;
     JA(1) <= estrobo;
-    JA(2) <= contencao_demo;
+
+    --------------------------------------------------------------------------
+    -- Saida da cerca pelo JA(2).
+    --
+    -- Módulo relé considerado ativo em nível baixo:
+    --
+    -- disparando = '0'
+    -- cerca_ativa_segura = '0'
+    -- JA(2) = '1'
+    -- relé desligado
+    --
+    -- disparando = '1'
+    -- cerca_ativa_segura = '1'
+    -- JA(2) = '0'
+    -- relé ligado
+    --------------------------------------------------------------------------
+    JA(2) <= cerca_ativa_segura;
 
 end architecture;

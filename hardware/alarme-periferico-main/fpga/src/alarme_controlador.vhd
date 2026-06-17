@@ -21,26 +21,27 @@ entity alarme_controlador is
         WATCHDOG_SECONDS   : positive := 5
     );
     port (
-        clk              : in  std_logic;
-        rst              : in  std_logic;
-        tick_1s          : in  std_logic;
-        arm_toggle_pulse : in  std_logic;
-        cmd_arm_i        : in  std_logic;
-        cmd_disarm_i     : in  std_logic;
-        ack_esp32_pulse  : in  std_logic;
-        zones_in         : in  std_logic_vector(4 downto 0);
-        delay_seconds_in : in  unsigned(6 downto 0);
+        clk                 : in  std_logic;
+        rst                 : in  std_logic;
+        tick_1s             : in  std_logic;
+        arm_toggle_pulse    : in  std_logic;
+        cmd_arm_i           : in  std_logic;
+        cmd_disarm_i        : in  std_logic;
+        botao_secreto_pulse : in  std_logic;
+        ack_esp32_pulse     : in  std_logic;
+        zones_in            : in  std_logic_vector(4 downto 0);
+        delay_seconds_in    : in  unsigned(6 downto 0);
 
-        zones_latched_o  : out std_logic_vector(4 downto 0);
-        status_code_o    : out std_logic_vector(1 downto 0);
-        armado_o         : out std_logic;
-        disparando_o     : out std_logic;
-        em_atraso_o      : out std_logic;
-        sirene_o         : out std_logic;
-        fumaca_o         : out std_logic;
-        cerca_simulada_o : out std_logic;
-        sinal_esp32_o    : out std_logic;
-        reset_esp32_o    : out std_logic
+        zones_latched_o     : out std_logic_vector(4 downto 0);
+        status_code_o       : out std_logic_vector(1 downto 0);
+        armado_o            : out std_logic;
+        disparando_o        : out std_logic;
+        sirene_o            : out std_logic;
+        fumaca_o            : out std_logic;
+        cerca_simulada_o    : out std_logic;
+        sinal_esp32_o       : out std_logic;
+        reset_esp32_o       : out std_logic;
+        em_atraso_o         : out std_logic
     );
 end entity;
 
@@ -87,6 +88,8 @@ begin
 
     zones_latched_o <= zones_latched;
 
+    em_atraso_o <= '1' when state = ATRASO else '0';
+
     --------------------------------------------------------------------------
     -- Saidas de estado.
     --------------------------------------------------------------------------
@@ -96,10 +99,6 @@ begin
 
     disparando_o <= '1'
         when state = DISPARADO or state = RESET_COMUNICACAO
-        else '0';
-
-    em_atraso_o <= '1'
-        when state = VALIDANDO or state = ATRASO
         else '0';
 
     sirene_o <= '1'
@@ -169,7 +168,7 @@ begin
                 ack_received     <= '0';
 
             elsif cmd_arm_i = '1' and state = DESARMADO then
-                -- Comando remoto: armar (apenas se desarmado)
+
                 state            <= ARMADO;
                 zones_latched    <= (others => '0');
                 validation_count <= 0;
@@ -178,8 +177,20 @@ begin
                 watchdog_count   <= 0;
                 ack_received     <= '0';
 
-            elsif cmd_disarm_i = '1' then
-                -- Comando remoto: desarmar (de qualquer estado)
+            elsif cmd_disarm_i = '1' and state /= DESARMADO then
+
+                state            <= DESARMADO;
+                zones_latched    <= (others => '0');
+                validation_count <= 0;
+                delay_latched    <= 0;
+                seconds_count    <= 0;
+                watchdog_count   <= 0;
+                ack_received     <= '0';
+
+            elsif botao_secreto_pulse = '1' and state /= DESARMADO then
+
+                -- Botao externo de desarme:
+                -- desarma durante validacao, atraso, disparo ou reset de comunicacao.
                 state            <= DESARMADO;
                 zones_latched    <= (others => '0');
                 validation_count <= 0;

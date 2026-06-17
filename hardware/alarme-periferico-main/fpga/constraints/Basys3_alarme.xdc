@@ -132,11 +132,12 @@ set_property PACKAGE_PIN L2 [get_ports {JA[1]}]
 set_property PACKAGE_PIN J2 [get_ports {JA[2]}]
 	set_property IOSTANDARD LVCMOS33 [get_ports {JA[2]}]
 #Sch name = JA4
-# Nao utilizado nesta versao UART
-# A antiga entrada zona3_esp32_in foi removida
-#set_property PACKAGE_PIN G2 [get_ports {zona3_esp32_in}]
-	#set_property IOSTANDARD LVCMOS33 [get_ports {zona3_esp32_in}]
-	#set_property PULLDOWN true [get_ports {zona3_esp32_in}]
+## JA4 / FPGA G2 -> Botao externo de desarme
+## Ligacao: JA4 -> botao -> GND
+## Entrada ativa em nivel baixo: solto='1', apertado='0'
+set_property PACKAGE_PIN G2 [get_ports {ja4_botao_secreto_n}]
+	set_property IOSTANDARD LVCMOS33 [get_ports {ja4_botao_secreto_n}]
+	set_property PULLUP true [get_ports {ja4_botao_secreto_n}]
 ##Sch name = JA7
 #set_property PACKAGE_PIN H1 [get_ports {JA[4]}]
 	#set_property IOSTANDARD LVCMOS33 [get_ports {JA[4]}]
