@@ -6,7 +6,7 @@ import { parseVoiceCommand } from "@/lib/voice";
 import { colors, radius } from "@/theme";
 
 type Props = {
-  onCommand: (command: { type: CommandType; label: string }) => void;
+  onCommand: (command: { type: CommandType; value?: number | string; label: string }) => void;
 };
 
 export function VoiceCommandButton({ onCommand }: Props) {

@@ -20,23 +20,24 @@ export default function HistoryScreen() {
   const [filter, setFilter] = useState<EventType | undefined>();
   const [loading, setLoading] = useState(true);
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (quiet = false) => {
     if (!homeId) return;
-    setLoading(true);
+    if (!quiet) setLoading(true);
     try {
       const token = await getToken();
       const query = filter ? `?type=${filter}` : "";
       setEvents(await api.events(homeId, token, query));
     } catch (error) {
-      Alert.alert("Histórico indisponível", error instanceof Error ? error.message : "Tente novamente.");
+      if (!quiet) Alert.alert("Histórico indisponível", error instanceof Error ? error.message : "Tente novamente.");
     } finally {
       setLoading(false);
     }
   }, [filter, getToken, homeId]);
 
   useEffect(() => {
-    const timer = setTimeout(() => void load(), 0);
-    return () => clearTimeout(timer);
+    const initial = setTimeout(() => void load(), 0);
+    const timer = setInterval(() => void load(true), 5_000);
+    return () => { clearTimeout(initial); clearInterval(timer); };
   }, [load]);
 
   return (

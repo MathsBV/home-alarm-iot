@@ -3,7 +3,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { router } from "expo-router";
 import type { PropsWithChildren } from "react";
 import { useEffect, useState } from "react";
-import { Alert, StyleSheet, Text, View } from "react-native";
+import { Alert, Share, StyleSheet, Text, View } from "react-native";
 import { Button } from "@/components/Button";
 import { Screen } from "@/components/Screen";
 import { useAuth } from "@/context/AuthContext";
@@ -45,6 +45,16 @@ export default function SettingsScreen() {
     router.replace("/login");
   };
 
+  const exportar = async (format: "csv" | "json") => {
+    if (!homeId) return;
+    try {
+      const content = await api.exportData(homeId, await getToken(), format);
+      await Share.share({ message: content });
+    } catch (error) {
+      Alert.alert("Exportação indisponível", error instanceof Error ? error.message : "Tente novamente.");
+    }
+  };
+
   return (
     <Screen title="Ajustes" subtitle="Integrações, dados e segurança.">
       {demoMode ? (
@@ -78,8 +88,16 @@ export default function SettingsScreen() {
       </SectionGroup>
 
       <SectionGroup>
-        <SettingRow icon="download" title="Exportação Power BI" detail="Endpoints CSV e JSON protegidos por token Firebase" />
+        <SettingRow icon="download" title="Exportação de eventos" detail="Compartilhe os eventos em CSV ou JSON." />
         {homeId ? <Text style={styles.endpoint}>{api.exportUrl(homeId, "csv")}</Text> : null}
+        <View style={styles.exportRow}>
+          <View style={{ flex: 1 }}>
+            <Button title="Exportar CSV" variant="secondary" onPress={() => void exportar("csv")} />
+          </View>
+          <View style={{ flex: 1 }}>
+            <Button title="Exportar JSON" variant="secondary" onPress={() => void exportar("json")} />
+          </View>
+        </View>
       </SectionGroup>
 
       <SectionGroup>
@@ -164,6 +182,7 @@ const styles = StyleSheet.create({
     marginHorizontal: 14,
     marginBottom: 12,
   },
+  exportRow: { flexDirection: "row", gap: 10, padding: 12, borderTopWidth: 1, borderTopColor: colors.border },
   actions: { gap: 10 },
   version: { color: colors.textMuted, textAlign: "center", fontSize: 11, marginTop: 4 },
 });

@@ -22,7 +22,8 @@ entity uart_packet_rx is
         cmd_desarmar            : out std_logic;
         cmd_reset               : out std_logic;
 
-        delay_app               : out std_logic_vector(6 downto 0)
+        delay_app               : out std_logic_vector(6 downto 0);
+        manual_cm               : out std_logic_vector(2 downto 0)
     );
 end entity;
 
@@ -32,6 +33,7 @@ architecture rtl of uart_packet_rx is
     constant TYPE_ZONES : std_logic_vector(7 downto 0) := x"10";
     constant TYPE_CMD   : std_logic_vector(7 downto 0) := x"11";
     constant TYPE_DELAY : std_logic_vector(7 downto 0) := x"12";
+    constant TYPE_CM    : std_logic_vector(7 downto 0) := x"13";
 
     type state_t is (
         WAIT_START,
@@ -56,6 +58,9 @@ architecture rtl of uart_packet_rx is
     -- Atraso definido pelo app (padrao 10 s ate o app configurar).
     signal delay_reg         : std_logic_vector(6 downto 0) := "0001010";
 
+    -- Contramedidas manuais comandadas pelo app (bit0=sirene 1=estrobo 2=cerca).
+    signal manual_cm_reg     : std_logic_vector(2 downto 0) := "000";
+
 begin
 
     zonas_uart        <= zonas_reg;
@@ -63,6 +68,7 @@ begin
     esp_alert_sent_ok <= alert_ok_reg;
     esp_wifi_ok       <= wifi_ok_reg;
     delay_app         <= delay_reg;
+    manual_cm         <= manual_cm_reg;
 
     process(clk)
         variable checksum_calc : std_logic_vector(7 downto 0);
@@ -151,6 +157,15 @@ begin
                             elsif type_reg = TYPE_DELAY then
 
                                 delay_reg <= data0_reg(6 downto 0);
+
+                            ------------------------------------------------------------------
+                            -- Pacote 0x13: contramedidas manuais do app
+                            -- 0xA5 | 0x13 | MASK | 0x00 | CHECKSUM
+                            -- MASK: bit0=sirene, bit1=estrobo, bit2=cerca
+                            ------------------------------------------------------------------
+                            elsif type_reg = TYPE_CM then
+
+                                manual_cm_reg <= data0_reg(2 downto 0);
 
                             end if;
                         end if;

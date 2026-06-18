@@ -71,6 +71,13 @@ architecture structural of top_alarme_basys3 is
     -- Só fica ativo quando o alarme estiver disparando.
     signal cerca_ativa_segura : std_logic;
 
+    -- Saidas finais dos atuadores = acionamento automatico (controlador)
+    -- OR comando manual vindo do app (mascara 0x13).
+    signal sirene_final     : std_logic;
+    signal estrobo_final    : std_logic;
+    signal cerca_final      : std_logic;
+    signal manual_cm        : std_logic_vector(2 downto 0);
+
     signal ack_indicator    : std_logic := '0';
 
     constant BTN_STABLE_CYCLES : positive := CLK_FREQ_HZ / 100;
@@ -134,6 +141,14 @@ begin
     -- Não liga apenas por estar armado.
     --------------------------------------------------------------------------
     cerca_ativa_segura <= disparando;
+
+    --------------------------------------------------------------------------
+    -- Atuadores finais: ligam no disparo (controlador) OU por comando manual
+    -- do app. Assim sirene/estrobo/cerca podem ser acionados sozinhos.
+    --------------------------------------------------------------------------
+    sirene_final  <= sirene             or manual_cm(0);
+    estrobo_final <= estrobo            or manual_cm(1);
+    cerca_final   <= cerca_ativa_segura or manual_cm(2);
 
     --------------------------------------------------------------------------
     -- Gerador de tick de 1 segundo.
@@ -250,7 +265,8 @@ begin
             cmd_armar               => cmd_armar_uart,
             cmd_desarmar            => cmd_desarmar_uart,
             cmd_reset               => cmd_reset_uart,
-            delay_app               => delay_app
+            delay_app               => delay_app,
+            manual_cm               => manual_cm
         );
 
     --------------------------------------------------------------------------
@@ -357,9 +373,9 @@ begin
     --------------------------------------------------------------------------
     status_uart(0) <= armado;
     status_uart(1) <= disparando;
-    status_uart(2) <= sirene;
-    status_uart(3) <= estrobo;
-    status_uart(4) <= cerca_ativa_segura;
+    status_uart(2) <= sirene_final;
+    status_uart(3) <= estrobo_final;
+    status_uart(4) <= cerca_final;
     status_uart(5) <= esp32_timeout;
     status_uart(6) <= em_atraso;
     status_uart(7) <= '0';
@@ -410,17 +426,17 @@ begin
     led(4 downto 0) <= zones_latched;
     led(5)          <= armado;
     led(6)          <= disparando;
-    led(7)          <= sirene;
-    led(8)          <= estrobo;
-    led(9)          <= cerca_ativa_segura;
+    led(7)          <= sirene_final;
+    led(8)          <= estrobo_final;
+    led(9)          <= cerca_final;
     led(10)         <= esp32_timeout or reset_esp32;
     led(11)         <= ack_indicator;
 
     --------------------------------------------------------------------------
     -- Saidas para atuadores pelo Pmod JA.
     --------------------------------------------------------------------------
-    JA(0) <= sirene;
-    JA(1) <= estrobo;
+    JA(0) <= sirene_final;
+    JA(1) <= estrobo_final;
 
     --------------------------------------------------------------------------
     -- Saida da cerca pelo JA(2).
@@ -437,6 +453,6 @@ begin
     -- JA(2) = '0'
     -- relé ligado
     --------------------------------------------------------------------------
-    JA(2) <= cerca_ativa_segura;
+    JA(2) <= cerca_final;
 
 end architecture;

@@ -91,6 +91,7 @@ constexpr uint8_t UART_START            = 0xA5;
 constexpr uint8_t TYPE_ZONES_FROM_ESP32 = 0x10;
 constexpr uint8_t TYPE_CMD_TO_FPGA       = 0x11;
 constexpr uint8_t TYPE_SET_DELAY_TO_FPGA = 0x12;
+constexpr uint8_t TYPE_CM_TO_FPGA        = 0x13;
 constexpr uint8_t TYPE_STATUS_FROM_FPGA  = 0x20;
 constexpr uint8_t TYPE_DELAY_FROM_FPGA   = 0x21;
 
@@ -223,9 +224,10 @@ bool prevEmAtraso   = false;
 // Segundos restantes da temporização, reportados pela FPGA (pacote 0x21).
 uint8_t delayRemainingFpga = 0;
 
-// Estado local das contramedidas (app pode toglar independente do hardware)
-bool countermeasureActive[3] = {false, false, false};
-// índices: 0=sirene  1=estrobo  2=cerca
+// Setpoint manual das contramedidas, definido pelo app e enviado à FPGA (0x13).
+// O acionamento automático no disparo é somado a isto dentro da própria FPGA.
+bool          manualCm[3]   = {false, false, false};  // 0=sirene 1=estrobo 2=cerca
+unsigned long ultimoEnvioCm = 0;
 
 // Comando remoto em confirmação (closed-loop: reenvia até a FPGA confirmar).
 struct CmdRemoto {
@@ -312,6 +314,14 @@ void enviarComandoFpga(uint8_t cmd) {
 
 void enviarDelayParaFpga(uint8_t segundos) {
   enviarPacote(TYPE_SET_DELAY_TO_FPGA, segundos, 0x00);
+}
+
+void enviarContramedidasParaFpga() {
+  uint8_t mask = 0;
+  if (manualCm[0]) mask |= (1 << 0);
+  if (manualCm[1]) mask |= (1 << 1);
+  if (manualCm[2]) mask |= (1 << 2);
+  enviarPacote(TYPE_CM_TO_FPGA, mask, 0x00);
 }
 
 void atualizarStatusFpga(uint8_t status, uint8_t zonasLatched) {
@@ -530,7 +540,7 @@ void publicarEstado() {
   doc["sequence"]      = (long)msgSequence++;
   doc["mode"]          = modoAlarme();
   doc["online"]        = true;
-  doc["sirenActive"]   = countermeasureActive[0];
+  doc["sirenActive"]   = statusFpga.sireneLigada || manualCm[0];
   doc["delaySeconds"]  = (int)delaySecondsConfig;
   doc["triggerCount"]  = (long)triggerCount;
 
@@ -556,9 +566,9 @@ void publicarEstado() {
   }
 
   JsonArray cm = doc["countermeasures"].to<JsonArray>();
-  { JsonObject o = cm.add<JsonObject>(); o["id"]="sirene";  o["name"]="Sirene";         o["active"]=countermeasureActive[0]; }
-  { JsonObject o = cm.add<JsonObject>(); o["id"]="estrobo"; o["name"]="Estrobo";        o["active"]=countermeasureActive[1]; }
-  { JsonObject o = cm.add<JsonObject>(); o["id"]="cerca";   o["name"]="Cerca Eletrica"; o["active"]=countermeasureActive[2]; }
+  { JsonObject o = cm.add<JsonObject>(); o["id"]="sirene";  o["name"]="Sirene";         o["active"]=statusFpga.sireneLigada    || manualCm[0]; }
+  { JsonObject o = cm.add<JsonObject>(); o["id"]="estrobo"; o["name"]="Estrobo";        o["active"]=statusFpga.estroboLigado   || manualCm[1]; }
+  { JsonObject o = cm.add<JsonObject>(); o["id"]="cerca";   o["name"]="Cerca Eletrica"; o["active"]=statusFpga.cercaHabilitada || manualCm[2]; }
 
   serializeJson(doc, buf, sizeof(buf));
   mqttClient.publish(TOPIC_STATE, buf, true);
@@ -642,11 +652,12 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
 
   } else if (strcmp(type, "SET_COUNTERMEASURE") == 0) {
     const char* val = doc["value"] | "";
-    if      (strcmp(val, "sirene")  == 0) countermeasureActive[0] = !countermeasureActive[0];
-    else if (strcmp(val, "estrobo") == 0) countermeasureActive[1] = !countermeasureActive[1];
-    else if (strcmp(val, "cerca")   == 0) countermeasureActive[2] = !countermeasureActive[2];
+    if      (strcmp(val, "sirene")  == 0) manualCm[0] = !manualCm[0];
+    else if (strcmp(val, "estrobo") == 0) manualCm[1] = !manualCm[1];
+    else if (strcmp(val, "cerca")   == 0) manualCm[2] = !manualCm[2];
+    enviarContramedidasParaFpga();   // aplica de verdade no hardware
+    ultimoEnvioCm = millis();
     if (requestId[0]) publicarCmdAck(requestId, true);
-    // Publica estado imediatamente para o app ver a mudança
     if (mqttClient.connected()) publicarEstado();
   }
 }
@@ -661,13 +672,11 @@ void verificarTransicoes() {
     publicarEstado();
   }
 
-  // Alarme disparou: sincroniza contramedidas com o hardware e manda ACK à FPGA
+  // Alarme disparou: manda ACK à FPGA e notifica.
+  // As contramedidas automáticas são acionadas pela própria FPGA (OR com o manual).
   if (statusFpga.disparando && !prevDisparando) {
     triggerCount++;
-    alertaEnviadoOk        = true;
-    countermeasureActive[0] = statusFpga.sireneLigada;
-    countermeasureActive[1] = statusFpga.estroboLigado;
-    countermeasureActive[2] = statusFpga.cercaHabilitada;
+    alertaEnviadoOk = true;
     publicarEvento(
       "ALARM_TRIGGERED",
       "Alarme Disparado",
@@ -677,12 +686,9 @@ void verificarTransicoes() {
     publicarEstado();
   }
 
-  // Alarme parou de disparar: reseta ACK e apaga contramedidas
+  // Alarme parou de disparar: reseta ACK. O setpoint manual do app é preservado.
   if (!statusFpga.disparando && prevDisparando) {
-    alertaEnviadoOk        = false;
-    countermeasureActive[0] = false;
-    countermeasureActive[1] = false;
-    countermeasureActive[2] = false;
+    alertaEnviadoOk = false;
     publicarEstado();
   }
 
@@ -692,11 +698,8 @@ void verificarTransicoes() {
     publicarEstado();
   }
 
-  // Desarmado: garante contramedidas apagadas
+  // Desarmado
   if (!statusFpga.armado && prevArmado) {
-    countermeasureActive[0] = false;
-    countermeasureActive[1] = false;
-    countermeasureActive[2] = false;
     publicarEvento("ALARM_DISARMED", "Alarme Desarmado", "Sistema desarmado.", "info");
     publicarEstado();
   }
@@ -944,6 +947,12 @@ void loop() {
   if (delaySetpointDefinido && agora - ultimoEnvioDelay >= 2000) {
     ultimoEnvioDelay = agora;
     enviarDelayParaFpga(delaySetpoint);
+  }
+
+  // Reenvia as contramedidas manuais periodicamente (robustez e caso a FPGA resete).
+  if (agora - ultimoEnvioCm >= 2000) {
+    ultimoEnvioCm = agora;
+    enviarContramedidasParaFpga();
   }
 
   // Manter WiFi

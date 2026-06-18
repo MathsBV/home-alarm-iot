@@ -1,6 +1,16 @@
 import { getApp, getApps, initializeApp } from "firebase/app";
-import { initializeAuth, getReactNativePersistence, type Auth } from "firebase/auth";
+import { initializeAuth, getAuth, type Auth, type Persistence } from "firebase/auth";
+import * as firebaseAuth from "firebase/auth";
 import AsyncStorage from "@react-native-async-storage/async-storage";
+
+// getReactNativePersistence só existe no bundle React Native do Firebase
+// (dist/rn). O Metro resolve esse bundle em runtime, mas os tipos do
+// entrypoint padrão (que o tsc usa) não o expõem — daí o acesso via cast.
+const getReactNativePersistence = (
+  firebaseAuth as unknown as {
+    getReactNativePersistence: (storage: unknown) => Persistence;
+  }
+).getReactNativePersistence;
 
 const firebaseConfig = {
   apiKey: process.env.EXPO_PUBLIC_FIREBASE_API_KEY,
@@ -16,9 +26,14 @@ export const demoMode =
 
 function buildAuth(): Auth {
   const app = getApps().length ? getApp() : initializeApp(firebaseConfig);
-  return initializeAuth(app, {
-    persistence: getReactNativePersistence(AsyncStorage),
-  });
+  try {
+    return initializeAuth(app, {
+      persistence: getReactNativePersistence(AsyncStorage),
+    });
+  } catch {
+    // initializeAuth já foi chamado nesta instância (ex.: fast refresh).
+    return getAuth(app);
+  }
 }
 
 export const auth = (demoMode ? null : buildAuth()) as Auth;

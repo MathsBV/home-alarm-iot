@@ -88,4 +88,12 @@ export const api = {
     }),
   exportUrl: (homeId: string, format: "csv" | "json") =>
     `${API_URL}/api/homes/${homeId}/events/export?format=${format}`,
+  exportData: async (homeId: string, token: string, format: "csv" | "json") => {
+    const response = await fetch(
+      `${API_URL}/api/homes/${homeId}/events/export?format=${format}`,
+      { headers: { Authorization: `Bearer ${token}` } },
+    );
+    if (!response.ok) throw new Error(`Erro HTTP ${response.status}`);
+    return response.text();
+  },
 };
