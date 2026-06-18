@@ -1,4 +1,4 @@
-import type { AlarmEvent, AlarmState, CommandType } from "@home-alarm/contracts";
+import type { AlarmEvent, AlarmState, CommandType, NotificationAck } from "@home-alarm/contracts";
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL ?? "http://localhost:3000";
 
@@ -14,7 +14,7 @@ export type Contact = {
   name: string;
   email?: string;
   phone?: string;
-  channels: { push: boolean; email: boolean; sms: boolean };
+  channels: { push: boolean; email: boolean; sms: boolean; whatsapp: boolean };
 };
 
 async function request<T>(
@@ -83,9 +83,11 @@ export const api = {
       body: JSON.stringify({ token: pushToken }),
     }),
   triggerDemo: (homeId: string, token: string) =>
-    request<AlarmEvent>(`/api/homes/${homeId}/demo/trigger`, token, {
-      method: "POST",
-    }),
+    request<{ event: AlarmEvent; channels: NotificationAck["channels"] }>(
+      `/api/homes/${homeId}/demo/trigger`,
+      token,
+      { method: "POST" },
+    ),
   exportUrl: (homeId: string, format: "csv" | "json") =>
     `${API_URL}/api/homes/${homeId}/events/export?format=${format}`,
   exportData: async (homeId: string, token: string, format: "csv" | "json") => {

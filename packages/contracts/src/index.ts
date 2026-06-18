@@ -123,6 +123,7 @@ export const notificationAckSchema = baseMessageSchema.extend({
     push: z.enum(["sent", "failed", "skipped"]),
     email: z.enum(["sent", "failed", "skipped"]),
     sms: z.enum(["sent", "failed", "skipped"]),
+    whatsapp: z.enum(["sent", "failed", "skipped"]),
   }),
 });
 

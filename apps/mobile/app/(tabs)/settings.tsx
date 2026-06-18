@@ -71,8 +71,12 @@ export default function SettingsScreen() {
           onPress={async () => {
             if (!homeId) return;
             try {
-              await api.triggerDemo(homeId, await getToken());
-              Alert.alert("Disparo simulado", "Abra o painel para acompanhar o evento.");
+              const { channels } = await api.triggerDemo(homeId, await getToken());
+              const label = { sent: "enviado", failed: "falhou", skipped: "não configurado" };
+              Alert.alert(
+                "Disparo simulado",
+                `Notificações:\n• Push: ${label[channels.push]}\n• E-mail: ${label[channels.email]}\n• SMS: ${label[channels.sms]}\n• WhatsApp: ${label[channels.whatsapp]}`,
+              );
             } catch (error) {
               Alert.alert("Simulação indisponível", error instanceof Error ? error.message : "Tente novamente.");
             }

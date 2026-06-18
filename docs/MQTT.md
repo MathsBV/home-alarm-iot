@@ -87,4 +87,4 @@ O ESP32 ignora comandos após `expiresAt` e sempre responde em `command-acks`, u
 
 Cada ocorrência lógica possui um `eventId` único. Reenvios mantêm o mesmo identificador para permitir deduplicação.
 
-Quando `ALARM_TRIGGERED` é recebido, o gateway tenta push, e-mail e SMS. Depois publica `notification-acks`. O ESP32 deve sinalizar essa confirmação ao FPGA; caso ela não chegue no limite definido no hardware, o FPGA pode reiniciar o ESP32 conforme o watchdog do projeto.
+Quando `ALARM_TRIGGERED` é recebido, o gateway tenta push, e-mail, SMS e WhatsApp. Depois publica `notification-acks` com o resultado por canal (`push`/`email`/`sms`/`whatsapp` = `sent`/`failed`/`skipped`). O ESP32 assina esse tópico e só marca `alertaEnviadoOk` (ACK ao FPGA, via FLAGS bit1 do pacote `0x10`) quando pelo menos um canal remoto sai como `sent` — ou quando todos estão `skipped` (nada configurado). Se a confirmação não chegar no limite do hardware (~5 s), o FPGA reinicia o ESP32 conforme o watchdog do projeto.

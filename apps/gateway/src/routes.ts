@@ -9,6 +9,8 @@ import {
   type AlarmEvent,
 } from "@home-alarm/contracts";
 import { config } from "./config.js";
+import type { AlertService } from "./alerts.js";
+import { notificationAck } from "./alerts.js";
 import type { MqttService } from "./mqtt-service.js";
 import type { Repository } from "./repository.js";
 
@@ -27,6 +29,7 @@ const contactSchema = z.object({
     push: z.boolean(),
     email: z.boolean(),
     sms: z.boolean(),
+    whatsapp: z.boolean(),
   }),
 });
 
@@ -42,7 +45,11 @@ async function requireMembership(
   }
 }
 
-export function apiRoutes(repository: Repository, mqttService: MqttService) {
+export function apiRoutes(
+  repository: Repository,
+  mqttService: MqttService,
+  alerts: AlertService,
+) {
   const router = Router();
 
   router.post("/homes", async (request, response) => {
@@ -112,7 +119,15 @@ export function apiRoutes(repository: Repository, mqttService: MqttService) {
       return response.status(404).json({ error: "Rota disponível apenas no modo demonstração." });
     }
     const event = await repository.triggerDemoAlarm(homeId);
-    response.status(201).json(event);
+    if (!event) {
+      return response.status(404).json({ error: "Residência não encontrada." });
+    }
+    // Dispara as notificações (push/email/sms) pelo mesmo caminho de um
+    // evento real vindo do hardware, para que seja possível validar os
+    // canais sem o dispositivo físico.
+    const channels = await alerts.notify(homeId, event);
+    mqttService.publishNotificationAck(notificationAck(event, channels));
+    response.status(201).json({ event, channels });
   });
 
   router.get("/homes/:homeId/events", async (request, response) => {

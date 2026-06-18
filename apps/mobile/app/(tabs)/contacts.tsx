@@ -15,7 +15,7 @@ export default function ContactsScreen() {
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [phone, setPhone] = useState("");
-  const [channels, setChannels] = useState({ push: false, email: true, sms: true });
+  const [channels, setChannels] = useState({ push: false, email: true, sms: true, whatsapp: false });
 
   const load = useCallback(async () => {
     if (!homeId) return;
@@ -75,6 +75,7 @@ export default function ContactsScreen() {
             <ChannelToggle label="Push" value={channels.push} onChange={(v) => setChannels({ ...channels, push: v })} />
             <ChannelToggle label="E-mail" value={channels.email} onChange={(v) => setChannels({ ...channels, email: v })} />
             <ChannelToggle label="SMS" value={channels.sms} onChange={(v) => setChannels({ ...channels, sms: v })} />
+            <ChannelToggle label="WhatsApp" value={channels.whatsapp} onChange={(v) => setChannels({ ...channels, whatsapp: v })} />
           </View>
           <Button title="Salvar contato" onPress={save} disabled={!name || (!email && !phone)} />
         </View>

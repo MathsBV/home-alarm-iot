@@ -44,7 +44,7 @@ app.get("/health", (_request, response) => {
 // Exportação para BI: autenticada por API key própria, fora do login Firebase.
 app.use("/bi", biRoutes(repository));
 
-app.use("/api", authMiddleware(firebase?.auth ?? null), apiRoutes(repository, mqttService));
+app.use("/api", authMiddleware(firebase?.auth ?? null), apiRoutes(repository, mqttService, alerts));
 
 const errorHandler: ErrorRequestHandler = (error, _request, response, _next) => {
   console.error(error);

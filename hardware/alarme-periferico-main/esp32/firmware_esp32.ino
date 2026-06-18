@@ -74,6 +74,7 @@
 #define TOPIC_EVENTS       TOPIC_ROOT "/events"
 #define TOPIC_COMMANDS     TOPIC_ROOT "/commands"
 #define TOPIC_CMD_ACKS     TOPIC_ROOT "/command-acks"
+#define TOPIC_NOTIFY_ACKS  TOPIC_ROOT "/notification-acks"
 
 // =======================================================
 // UART
@@ -623,6 +624,34 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
   JsonDocument doc;
   if (deserializeJson(doc, payload, length) != DeserializationError::Ok) return;
 
+  // ----------------------------------------------------------------------
+  // Confirmação de envio das notificações (gateway -> ESP32).
+  // Só aqui sabemos que e-mail/SMS/WhatsApp realmente saíram. O FPGA usa
+  // a flag alertaEnviadoOk como ACK; se não chegar, o watchdog reseta o ESP32.
+  // ----------------------------------------------------------------------
+  if (strcmp(topic, TOPIC_NOTIFY_ACKS) == 0) {
+    const char* email = doc["channels"]["email"]    | "skipped";
+    const char* sms   = doc["channels"]["sms"]      | "skipped";
+    const char* whats = doc["channels"]["whatsapp"] | "skipped";
+
+    const bool algumEnviado =
+      strcmp(email, "sent") == 0 ||
+      strcmp(sms,   "sent") == 0 ||
+      strcmp(whats, "sent") == 0;
+
+    // Se nenhum canal remoto está configurado (todos "skipped"), não há o que
+    // confirmar: aceitamos para não deixar o FPGA resetando o ESP32 em loop.
+    const bool nenhumConfigurado =
+      strcmp(email, "skipped") == 0 &&
+      strcmp(sms,   "skipped") == 0 &&
+      strcmp(whats, "skipped") == 0;
+
+    if (algumEnviado || nenhumConfigurado) {
+      alertaEnviadoOk = true;   // sinaliza o FPGA no próximo pacote 0x10
+    }
+    return;
+  }
+
   const char* type      = doc["type"]      | "";
   const char* requestId = doc["requestId"] | "";
 
@@ -672,11 +701,14 @@ void verificarTransicoes() {
     publicarEstado();
   }
 
-  // Alarme disparou: manda ACK à FPGA e notifica.
+  // Alarme disparou: publica o evento e AGUARDA a confirmação de envio.
+  // alertaEnviadoOk só vira true quando o gateway responder em notification-acks
+  // (ver mqttCallback). Enquanto isso o FPGA conta o watchdog; se a notificação
+  // não sair em ~5 s, o FPGA reseta o ESP32 — exatamente o requisito do projeto.
   // As contramedidas automáticas são acionadas pela própria FPGA (OR com o manual).
   if (statusFpga.disparando && !prevDisparando) {
     triggerCount++;
-    alertaEnviadoOk = true;
+    alertaEnviadoOk = false;
     publicarEvento(
       "ALARM_TRIGGERED",
       "Alarme Disparado",
@@ -814,6 +846,7 @@ void conectarMqtt() {
   if (ok) {
     Serial.println(" OK");
     mqttClient.subscribe(TOPIC_COMMANDS, 1);
+    mqttClient.subscribe(TOPIC_NOTIFY_ACKS, 1);
     publicarDisponibilidade(true, "connected");
     publicarEstado();
   } else {

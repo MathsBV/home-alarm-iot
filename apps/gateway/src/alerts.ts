@@ -24,14 +24,21 @@ export class AlertService {
       this.repository.listPushTokens(homeId),
     ]);
 
+    // TESTE: quando há override configurado, ignoramos a lista de contatos e
+    // enviamos para o destinatário travado. Caso contrário, usamos os contatos.
+    const emailAddresses = config.ALERT_OVERRIDE_EMAIL
+      ? [config.ALERT_OVERRIDE_EMAIL]
+      : contacts.filter((item) => item.channels.email).flatMap((item) => item.email ?? []);
+    const smsNumbers = config.ALERT_OVERRIDE_SMS
+      ? [config.ALERT_OVERRIDE_SMS]
+      : contacts.filter((item) => item.channels.sms).flatMap((item) => item.phone ?? []);
+
     const channels = {
       push: await this.sendPush(tokens.map((item) => item.token), event),
-      email: await this.sendEmails(
-        contacts.filter((item) => item.channels.email).flatMap((item) => item.email ?? []),
-        event,
-      ),
-      sms: await this.sendSms(
-        contacts.filter((item) => item.channels.sms).flatMap((item) => item.phone ?? []),
+      email: await this.sendEmails(emailAddresses, event),
+      sms: await this.sendSms(smsNumbers, event),
+      whatsapp: await this.sendWhatsapp(
+        contacts.filter((item) => item.channels.whatsapp).flatMap((item) => item.phone ?? []),
         event,
       ),
     };
@@ -81,6 +88,25 @@ export class AlertService {
           this.sms!.messages.create({
             from: config.TWILIO_FROM,
             to,
+            body: `ALARME: ${event.title}. ${event.description ?? ""}`.slice(0, 1500),
+          }),
+        ),
+      );
+      return "sent";
+    } catch {
+      return "failed";
+    }
+  }
+
+  private async sendWhatsapp(numbers: string[], event: AlarmEvent): Promise<ChannelResult> {
+    if (!numbers.length || !this.sms || !config.TWILIO_WHATSAPP_FROM) return "skipped";
+    try {
+      await Promise.all(
+        numbers.map((to) =>
+          this.sms!.messages.create({
+            from: config.TWILIO_WHATSAPP_FROM,
+            // O Twilio exige o prefixo "whatsapp:" também no destinatário.
+            to: to.startsWith("whatsapp:") ? to : `whatsapp:${to}`,
             body: `ALARME: ${event.title}. ${event.description ?? ""}`.slice(0, 1500),
           }),
         ),

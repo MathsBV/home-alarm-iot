@@ -23,6 +23,13 @@ const envSchema = z.object({
   TWILIO_ACCOUNT_SID: z.string().optional(),
   TWILIO_AUTH_TOKEN: z.string().optional(),
   TWILIO_FROM: z.string().optional(),
+  // Número WhatsApp do Twilio, ex.: "whatsapp:+14155238886" (sandbox).
+  TWILIO_WHATSAPP_FROM: z.string().optional(),
+  // TESTE: trava os destinatários. Enquanto definidos, todos os e-mails e SMS
+  // vão para estes endereços, ignorando a lista de contatos cadastrada.
+  // Remover quando for liberar o envio para os contatos reais.
+  ALERT_OVERRIDE_EMAIL: z.string().default("mabrugval@gmail.com"),
+  ALERT_OVERRIDE_SMS: z.string().default("+5511947007235"),
 });
 
 export const config = envSchema.parse(process.env);

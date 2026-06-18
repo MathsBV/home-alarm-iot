@@ -20,6 +20,7 @@ export type Contact = {
     push: boolean;
     email: boolean;
     sms: boolean;
+    whatsapp: boolean;
   };
 };
 
