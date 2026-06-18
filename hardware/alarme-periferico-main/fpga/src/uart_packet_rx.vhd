@@ -20,7 +20,9 @@ entity uart_packet_rx is
 
         cmd_armar               : out std_logic;
         cmd_desarmar            : out std_logic;
-        cmd_reset               : out std_logic
+        cmd_reset               : out std_logic;
+
+        delay_app               : out std_logic_vector(6 downto 0)
     );
 end entity;
 
@@ -29,6 +31,7 @@ architecture rtl of uart_packet_rx is
     constant START_BYTE : std_logic_vector(7 downto 0) := x"A5";
     constant TYPE_ZONES : std_logic_vector(7 downto 0) := x"10";
     constant TYPE_CMD   : std_logic_vector(7 downto 0) := x"11";
+    constant TYPE_DELAY : std_logic_vector(7 downto 0) := x"12";
 
     type state_t is (
         WAIT_START,
@@ -50,12 +53,16 @@ architecture rtl of uart_packet_rx is
     signal alert_ok_reg      : std_logic := '0';
     signal wifi_ok_reg       : std_logic := '0';
 
+    -- Atraso definido pelo app (padrao 10 s ate o app configurar).
+    signal delay_reg         : std_logic_vector(6 downto 0) := "0001010";
+
 begin
 
     zonas_uart        <= zonas_reg;
     esp_heartbeat     <= heartbeat_reg;
     esp_alert_sent_ok <= alert_ok_reg;
     esp_wifi_ok       <= wifi_ok_reg;
+    delay_app         <= delay_reg;
 
     process(clk)
         variable checksum_calc : std_logic_vector(7 downto 0);
@@ -136,6 +143,14 @@ begin
                                 elsif data0_reg = x"03" then
                                     cmd_reset <= '1';
                                 end if;
+
+                            ------------------------------------------------------------------
+                            -- Pacote 0x12: atraso definido pelo app
+                            -- 0xA5 | 0x12 | DELAY | 0x00 | CHECKSUM
+                            ------------------------------------------------------------------
+                            elsif type_reg = TYPE_DELAY then
+
+                                delay_reg <= data0_reg(6 downto 0);
 
                             end if;
                         end if;

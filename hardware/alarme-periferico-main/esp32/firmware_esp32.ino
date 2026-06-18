@@ -89,9 +89,10 @@ constexpr uint32_t UART_BAUD    = 115200;
 
 constexpr uint8_t UART_START            = 0xA5;
 constexpr uint8_t TYPE_ZONES_FROM_ESP32 = 0x10;
-constexpr uint8_t TYPE_CMD_TO_FPGA      = 0x11;
-constexpr uint8_t TYPE_STATUS_FROM_FPGA = 0x20;
-constexpr uint8_t TYPE_DELAY_FROM_FPGA  = 0x21;
+constexpr uint8_t TYPE_CMD_TO_FPGA       = 0x11;
+constexpr uint8_t TYPE_SET_DELAY_TO_FPGA = 0x12;
+constexpr uint8_t TYPE_STATUS_FROM_FPGA  = 0x20;
+constexpr uint8_t TYPE_DELAY_FROM_FPGA   = 0x21;
 
 constexpr uint8_t CMD_ARMAR    = 0x01;
 constexpr uint8_t CMD_DESARMAR = 0x02;
@@ -210,24 +211,31 @@ uint32_t msgSequence      = 0;
 uint32_t triggerCount     = 0;
 uint8_t  delaySecondsConfig = 0;
 
+// Atraso definido pelo app, enviado à FPGA via pacote 0x12.
+uint8_t       delaySetpoint         = 0;
+bool          delaySetpointDefinido = false;
+unsigned long ultimoEnvioDelay      = 0;
+
 bool prevArmado     = false;
 bool prevDisparando = false;
 bool prevEmAtraso   = false;
 
-// Contagem regressiva da temporização
-unsigned long atrasoPendingStartMs = 0;
+// Segundos restantes da temporização, reportados pela FPGA (pacote 0x21).
+uint8_t delayRemainingFpga = 0;
 
 // Estado local das contramedidas (app pode toglar independente do hardware)
 bool countermeasureActive[3] = {false, false, false};
 // índices: 0=sirene  1=estrobo  2=cerca
 
-// Comando FPGA pendente (agendado pelo callback MQTT)
-struct CmdPendente {
-  bool    ativo = false;
-  uint8_t cmd   = 0;
-  char    requestId[48] = {};
+// Comando remoto em confirmação (closed-loop: reenvia até a FPGA confirmar).
+struct CmdRemoto {
+  bool          pendente      = false;
+  uint8_t       cmd           = 0;   // CMD_ARMAR / CMD_DESARMAR / CMD_RESET
+  char          requestId[48] = {};
+  unsigned long inicio        = 0;   // instante do pedido (para timeout)
+  unsigned long ultimoEnvio   = 0;   // último reenvio pela UART
 };
-CmdPendente cmdPendente;
+CmdRemoto cmdRemoto;
 
 // =======================================================
 // Parser UART
@@ -302,6 +310,10 @@ void enviarComandoFpga(uint8_t cmd) {
   enviarPacote(TYPE_CMD_TO_FPGA, cmd, 0x00);
 }
 
+void enviarDelayParaFpga(uint8_t segundos) {
+  enviarPacote(TYPE_SET_DELAY_TO_FPGA, segundos, 0x00);
+}
+
 void atualizarStatusFpga(uint8_t status, uint8_t zonasLatched) {
   statusFpga.armado               = (status & (1 << 0)) != 0;
   statusFpga.disparando           = (status & (1 << 1)) != 0;
@@ -340,8 +352,10 @@ void processarByteRecebido(uint8_t byteRecebido) {
         if (rxType == TYPE_STATUS_FROM_FPGA) {
           atualizarStatusFpga(rxData0, rxData1);
         } else if (rxType == TYPE_DELAY_FROM_FPGA) {
-          // rxData0 = '0' & delay_seconds[6:0] — valor dos switches SW5-SW11
+          // rxData0 = delay configurado (switches SW5-SW11)
+          // rxData1 = segundos restantes da temporização em andamento
           delaySecondsConfig = rxData0 & 0x7F;
+          delayRemainingFpga = rxData1 & 0x7F;
         }
       }
       rxState = RX_WAIT_START;
@@ -520,11 +534,9 @@ void publicarEstado() {
   doc["delaySeconds"]  = (int)delaySecondsConfig;
   doc["triggerCount"]  = (long)triggerCount;
 
-  // Contagem regressiva: só inclui quando estiver temporizando
+  // Contagem regressiva vinda direto da FPGA (fonte da verdade).
   if (statusFpga.emAtraso && !statusFpga.disparando) {
-    unsigned long elapsedSec = (millis() - atrasoPendingStartMs) / 1000;
-    int remaining = (int)delaySecondsConfig - (int)elapsedSec;
-    doc["pendingSeconds"] = (remaining > 0) ? remaining : 0;
+    doc["pendingSeconds"] = (int)delayRemainingFpga;
   }
 
   static const char* zonaNames[] = {
@@ -605,19 +617,28 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
   const char* requestId = doc["requestId"] | "";
 
   if (strcmp(type, "ARM") == 0) {
-    cmdPendente.ativo = true;
-    cmdPendente.cmd   = CMD_ARMAR;
-    strncpy(cmdPendente.requestId, requestId, sizeof(cmdPendente.requestId) - 1);
+    cmdRemoto.pendente    = true;
+    cmdRemoto.cmd         = CMD_ARMAR;
+    cmdRemoto.inicio      = millis();
+    cmdRemoto.ultimoEnvio = 0;
+    strncpy(cmdRemoto.requestId, requestId, sizeof(cmdRemoto.requestId) - 1);
 
   } else if (strcmp(type, "DISARM") == 0 || strcmp(type, "SILENCE") == 0) {
-    cmdPendente.ativo = true;
-    cmdPendente.cmd   = CMD_DESARMAR;
-    strncpy(cmdPendente.requestId, requestId, sizeof(cmdPendente.requestId) - 1);
+    cmdRemoto.pendente    = true;
+    cmdRemoto.cmd         = CMD_DESARMAR;
+    cmdRemoto.inicio      = millis();
+    cmdRemoto.ultimoEnvio = 0;
+    strncpy(cmdRemoto.requestId, requestId, sizeof(cmdRemoto.requestId) - 1);
 
   } else if (strcmp(type, "SET_DELAY") == 0) {
     int val = doc["value"] | 0;
-    delaySecondsConfig = (uint8_t)constrain(val, 0, 120);
+    delaySetpoint         = (uint8_t)constrain(val, 0, 120);
+    delaySetpointDefinido = true;
+    delaySecondsConfig    = delaySetpoint;   // feedback imediato p/ o app
+    enviarDelayParaFpga(delaySetpoint);      // aplica na FPGA
+    ultimoEnvioDelay      = millis();
     if (requestId[0]) publicarCmdAck(requestId, true);
+    if (mqttClient.connected()) publicarEstado();
 
   } else if (strcmp(type, "SET_COUNTERMEASURE") == 0) {
     const char* val = doc["value"] | "";
@@ -635,9 +656,8 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
 // =======================================================
 
 void verificarTransicoes() {
-  // Temporização iniciou: marca o instante para calcular segundos restantes
+  // Entrou em temporização: publica estado na hora para o app reagir rápido.
   if (statusFpga.emAtraso && !prevEmAtraso) {
-    atrasoPendingStartMs = millis();
     publicarEstado();
   }
 
@@ -684,6 +704,48 @@ void verificarTransicoes() {
   prevArmado     = statusFpga.armado;
   prevDisparando = statusFpga.disparando;
   prevEmAtraso   = statusFpga.emAtraso;
+}
+
+// =======================================================
+// Comando remoto (ARM/DISARM) — closed-loop com a FPGA
+// =======================================================
+// Um único pacote UART pode se perder. Reenviamos o comando a cada 150 ms
+// até a FPGA confirmar pelo status, ou até estourar o timeout de 3 s.
+
+void processarComandoRemoto() {
+  if (!cmdRemoto.pendente) return;
+
+  const unsigned long agora = millis();
+
+  bool confirmado;
+  if (cmdRemoto.cmd == CMD_ARMAR) {
+    confirmado = statusFpga.armado;
+  } else if (cmdRemoto.cmd == CMD_DESARMAR) {
+    confirmado = !statusFpga.armado && !statusFpga.disparando;
+  } else {
+    confirmado = true;  // reset não tem feedback de estado
+  }
+
+  const bool timeout = (agora - cmdRemoto.inicio) > 3000;
+
+  if (confirmado || timeout) {
+    cmdRemoto.pendente = false;
+    if (cmdRemoto.requestId[0] && mqttClient.connected()) {
+      publicarCmdAck(
+        cmdRemoto.requestId,
+        confirmado,
+        confirmado ? nullptr : "Central nao confirmou o comando"
+      );
+    }
+    if (confirmado && mqttClient.connected()) publicarEstado();
+    memset(cmdRemoto.requestId, 0, sizeof(cmdRemoto.requestId));
+    return;
+  }
+
+  if (agora - cmdRemoto.ultimoEnvio >= 150) {
+    cmdRemoto.ultimoEnvio = agora;
+    enviarComandoFpga(cmdRemoto.cmd);
+  }
 }
 
 // =======================================================
@@ -875,6 +937,15 @@ void loop() {
     digitalWrite(LED_STATUS, !digitalRead(LED_STATUS));
   }
 
+  // Comando remoto (ARM/DISARM): reenvia até a FPGA confirmar.
+  processarComandoRemoto();
+
+  // Reenvia o atraso do app periodicamente (robustez e caso a FPGA resete).
+  if (delaySetpointDefinido && agora - ultimoEnvioDelay >= 2000) {
+    ultimoEnvioDelay = agora;
+    enviarDelayParaFpga(delaySetpoint);
+  }
+
   // Manter WiFi
   if (WiFi.status() != WL_CONNECTED) {
     wifiConectado = false;
@@ -893,16 +964,6 @@ void loop() {
 
     if (mqttClient.connected()) {
       mqttClient.loop();
-
-      // Processar comando FPGA pendente (agendado pelo callback)
-      if (cmdPendente.ativo) {
-        cmdPendente.ativo = false;
-        enviarComandoFpga(cmdPendente.cmd);
-        if (cmdPendente.requestId[0]) {
-          publicarCmdAck(cmdPendente.requestId, true);
-          memset(cmdPendente.requestId, 0, sizeof(cmdPendente.requestId));
-        }
-      }
 
       // Detectar transições e publicar eventos
       verificarTransicoes();

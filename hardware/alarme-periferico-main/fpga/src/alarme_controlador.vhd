@@ -41,7 +41,8 @@ entity alarme_controlador is
         cerca_simulada_o    : out std_logic;
         sinal_esp32_o       : out std_logic;
         reset_esp32_o       : out std_logic;
-        em_atraso_o         : out std_logic
+        em_atraso_o         : out std_logic;
+        delay_remaining_o   : out std_logic_vector(6 downto 0)
     );
 end entity;
 
@@ -89,6 +90,11 @@ begin
     zones_latched_o <= zones_latched;
 
     em_atraso_o <= '1' when state = ATRASO else '0';
+
+    -- Segundos restantes da temporizacao (fonte da verdade para o app).
+    delay_remaining_o <=
+        std_logic_vector(to_unsigned(delay_latched - seconds_count, 7))
+        when state = ATRASO else (others => '0');
 
     --------------------------------------------------------------------------
     -- Saidas de estado.

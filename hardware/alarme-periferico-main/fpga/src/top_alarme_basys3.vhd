@@ -65,6 +65,7 @@ architecture structural of top_alarme_basys3 is
     signal sinal_esp32      : std_logic;
     signal reset_esp32      : std_logic;
     signal em_atraso        : std_logic;
+    signal delay_remaining  : std_logic_vector(6 downto 0);
 
     -- Sinal lógico real da cerca:
     -- Só fica ativo quando o alarme estiver disparando.
@@ -96,6 +97,7 @@ architecture structural of top_alarme_basys3 is
     signal cmd_armar_uart             : std_logic;
     signal cmd_desarmar_uart          : std_logic;
     signal cmd_reset_uart             : std_logic;
+    signal delay_app                  : std_logic_vector(6 downto 0);
 
     --------------------------------------------------------------------------
     -- Watchdog de comunicacao ESP32
@@ -114,10 +116,10 @@ architecture structural of top_alarme_basys3 is
 begin
 
     --------------------------------------------------------------------------
-    -- Delay de disparo configurado pelos switches SW5 ate SW11.
-    -- SW0 ate SW4 nao sao mais sensores. Agora as zonas vem do ESP32 via UART.
+    -- Delay de disparo agora vem do app, via ESP32 (pacote UART 0x12).
+    -- Os switches nao controlam mais o atraso.
     --------------------------------------------------------------------------
-    delay_seconds <= unsigned(sw(11 downto 5));
+    delay_seconds <= unsigned(delay_app);
 
     --------------------------------------------------------------------------
     -- Botao externo de desarme ativo em nivel baixo.
@@ -247,7 +249,8 @@ begin
 
             cmd_armar               => cmd_armar_uart,
             cmd_desarmar            => cmd_desarmar_uart,
-            cmd_reset               => cmd_reset_uart
+            cmd_reset               => cmd_reset_uart,
+            delay_app               => delay_app
         );
 
     --------------------------------------------------------------------------
@@ -313,7 +316,8 @@ begin
             cerca_simulada_o    => contencao_demo,
             sinal_esp32_o       => sinal_esp32,
             reset_esp32_o       => reset_esp32,
-            em_atraso_o         => em_atraso
+            em_atraso_o         => em_atraso,
+            delay_remaining_o   => delay_remaining
         );
 
     --------------------------------------------------------------------------
@@ -393,6 +397,7 @@ begin
             status_in     => status_uart,
             zones_latched => zones_latched,
             delay_seconds => delay_seconds,
+            delay_remaining => delay_remaining,
 
             tx_busy       => uart_tx_busy,
             tx_start      => uart_tx_start,

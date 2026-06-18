@@ -11,9 +11,10 @@ entity uart_packet_tx is
         clk           : in  std_logic;
         rst           : in  std_logic;
 
-        status_in     : in  std_logic_vector(7 downto 0);
-        zones_latched : in  std_logic_vector(4 downto 0);
-        delay_seconds : in  unsigned(6 downto 0);
+        status_in       : in  std_logic_vector(7 downto 0);
+        zones_latched   : in  std_logic_vector(4 downto 0);
+        delay_seconds   : in  unsigned(6 downto 0);
+        delay_remaining : in  std_logic_vector(6 downto 0);
 
         tx_busy       : in  std_logic;
         tx_start      : out std_logic;
@@ -55,10 +56,11 @@ begin
     tx_data  <= tx_data_reg;
 
     process(clk)
-        variable zones_byte  : std_logic_vector(7 downto 0);
-        variable delay_byte  : std_logic_vector(7 downto 0);
-        variable checksum_a  : std_logic_vector(7 downto 0);
-        variable checksum_b  : std_logic_vector(7 downto 0);
+        variable zones_byte     : std_logic_vector(7 downto 0);
+        variable delay_byte     : std_logic_vector(7 downto 0);
+        variable remaining_byte : std_logic_vector(7 downto 0);
+        variable checksum_a     : std_logic_vector(7 downto 0);
+        variable checksum_b     : std_logic_vector(7 downto 0);
     begin
         if rising_edge(clk) then
 
@@ -89,14 +91,15 @@ begin
                             packet(3) <= zones_byte;
                             packet(4) <= checksum_a;
 
-                            -- Pacote B: 0xA5 | 0x21 | DELAY | 0x00 | CS
-                            delay_byte  := '0' & std_logic_vector(delay_seconds);
-                            checksum_b  := START_BYTE xor TYPE_DELAY xor delay_byte xor x"00";
+                            -- Pacote B: 0xA5 | 0x21 | DELAY_CONFIG | DELAY_RESTANTE | CS
+                            delay_byte     := '0' & std_logic_vector(delay_seconds);
+                            remaining_byte := '0' & delay_remaining;
+                            checksum_b     := START_BYTE xor TYPE_DELAY xor delay_byte xor remaining_byte;
 
                             packet(5) <= START_BYTE;
                             packet(6) <= TYPE_DELAY;
                             packet(7) <= delay_byte;
-                            packet(8) <= x"00";
+                            packet(8) <= remaining_byte;
                             packet(9) <= checksum_b;
 
                             byte_index <= 0;
