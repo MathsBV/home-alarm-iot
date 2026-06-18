@@ -1,6 +1,6 @@
 import type { AlarmMode, CommandType } from "@home-alarm/contracts";
 import { Ionicons } from "@expo/vector-icons";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -40,6 +40,7 @@ export default function DashboardScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [pending, setPending] = useState<PendingCommand | null>(null);
   const [delay, setDelay] = useState("30");
+  const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async (quiet = false) => {
     if (!homeId) return;
@@ -47,32 +48,65 @@ export default function DashboardScreen() {
     try {
       const token = await getToken();
       const dashboard = await api.dashboard(homeId, token);
+      if (!dashboard) {
+        setError("Central não encontrada para esta residência. Refaça a configuração.");
+        return;
+      }
       setData(dashboard);
       setDelay(String(dashboard.state.delaySeconds));
-    } catch (error) {
-      if ((error as { statusCode?: number }).statusCode === 403) {
+      setError(null);
+    } catch (err) {
+      const statusCode = (err as { statusCode?: number }).statusCode;
+      if (statusCode === 403) {
         await setHomeId(null);
         router.replace("/setup");
         return;
       }
-      if (!quiet) Alert.alert("Painel indisponível", error instanceof Error ? error.message : "Tente novamente.");
+      const detail = err instanceof Error ? err.message : "Falha ao conectar à central.";
+      setError(statusCode ? `Erro ${statusCode}: ${detail}` : detail);
     } finally {
       setLoading(false);
       setRefreshing(false);
     }
-  }, [getToken, homeId]);
+  }, [getToken, homeId, setHomeId]);
+
+  // Só faz polling automático depois que o painel carregou ao menos uma vez.
+  // Assim, se a primeira carga falhar, o app NÃO fica martelando o banco
+  // (o usuário usa o botão "Tentar de novo").
+  const hasData = useRef(false);
+  useEffect(() => { hasData.current = data !== null; }, [data]);
 
   useEffect(() => {
     const initial = setTimeout(() => void load(true), 0);
-    const timer = setInterval(() => void load(true), 4_000);
+    const timer = setInterval(() => { if (hasData.current) void load(true); }, 8_000);
     return () => { clearTimeout(initial); clearInterval(timer); };
   }, [load]);
 
-  if (loading || !data) {
+  if (loading && !data) {
     return (
       <View style={styles.loadingView}>
         <ActivityIndicator size="large" color={colors.primary} />
         <Text style={styles.loadingText}>Conectando à central...</Text>
+      </View>
+    );
+  }
+
+  if (!data) {
+    return (
+      <View style={styles.loadingView}>
+        <Ionicons name="cloud-offline-outline" size={40} color={colors.danger} />
+        <Text style={styles.errorTitle}>Não foi possível carregar o painel</Text>
+        <Text style={styles.loadingText}>{error ?? "Sem dados da central."}</Text>
+        <Pressable
+          style={styles.retryBtn}
+          onPress={() => { setLoading(true); setError(null); void load(); }}
+        >
+          <Ionicons name="refresh" size={18} color={colors.white} />
+          <Text style={styles.retryText}>Tentar de novo</Text>
+        </Pressable>
+        <Pressable onPress={async () => { await setHomeId(null); router.replace("/setup"); }}>
+          <Text style={styles.linkText}>Voltar à configuração</Text>
+        </Pressable>
       </View>
     );
   }
@@ -285,8 +319,21 @@ function formatTime(value: string) {
 }
 
 const styles = StyleSheet.create({
-  loadingView: { flex: 1, backgroundColor: colors.background, alignItems: "center", justifyContent: "center", gap: 14 },
-  loadingText: { color: colors.textMuted, fontSize: 13 },
+  loadingView: { flex: 1, backgroundColor: colors.background, alignItems: "center", justifyContent: "center", gap: 14, paddingHorizontal: 32 },
+  loadingText: { color: colors.textMuted, fontSize: 13, textAlign: "center" },
+  errorTitle: { color: colors.text, fontSize: 16, fontWeight: "800", textAlign: "center" },
+  retryBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    backgroundColor: colors.primary,
+    paddingHorizontal: 20,
+    paddingVertical: 12,
+    borderRadius: radius.medium,
+    marginTop: 4,
+  },
+  retryText: { color: colors.white, fontWeight: "800", fontSize: 14 },
+  linkText: { color: colors.info, fontSize: 13, fontWeight: "600" },
 
   // Header
   header: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },

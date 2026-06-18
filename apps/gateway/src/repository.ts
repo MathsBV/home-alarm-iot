@@ -176,10 +176,23 @@ export class Repository {
   }
 
   async saveAvailability(homeId: string, availability: Availability) {
-    const dashboard = await this.dashboard(homeId);
-    if (!dashboard) return;
-    await this.saveState(homeId, {
-      ...dashboard.state,
+    // Atualização parcial: não lê o estado inteiro só para marcar online/offline.
+    if (this.firestore) {
+      await this.firestore.collection("alarmStates").doc(homeId).set(
+        {
+          online: availability.online,
+          occurredAt: availability.occurredAt,
+          messageId: availability.messageId,
+          sequence: availability.sequence,
+        },
+        { merge: true },
+      );
+      return;
+    }
+    const state = this.states.get(homeId);
+    if (!state) return;
+    this.states.set(homeId, {
+      ...state,
       online: availability.online,
       occurredAt: availability.occurredAt,
       messageId: availability.messageId,

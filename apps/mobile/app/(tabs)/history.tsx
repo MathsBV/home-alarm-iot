@@ -36,7 +36,7 @@ export default function HistoryScreen() {
 
   useEffect(() => {
     const initial = setTimeout(() => void load(), 0);
-    const timer = setInterval(() => void load(true), 5_000);
+    const timer = setInterval(() => void load(true), 30_000);
     return () => { clearTimeout(initial); clearInterval(timer); };
   }, [load]);
 

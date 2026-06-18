@@ -14,10 +14,30 @@ import type { Repository } from "./repository.js";
 export class MqttService {
   private client: MqttClient | null = null;
 
+  // Cache deviceId -> homeId para evitar uma query no Firestore a cada
+  // mensagem MQTT (o dispositivo publica estado a cada 2s).
+  private homeCache = new Map<string, { homeId: string | null; expires: number }>();
+  private static readonly HOME_TTL_MS = 5 * 60_000; // hits
+  private static readonly MISS_TTL_MS = 30_000;     // não encontrado
+
   constructor(
     private readonly repository: Repository,
     private readonly alerts: AlertService,
   ) {}
+
+  private async resolveHomeId(deviceId: string): Promise<string | null> {
+    const now = Date.now();
+    const cached = this.homeCache.get(deviceId);
+    if (cached && cached.expires > now) return cached.homeId;
+
+    const home = await this.repository.findHomeByDeviceId(deviceId);
+    const homeId = home?.id ?? null;
+    this.homeCache.set(deviceId, {
+      homeId,
+      expires: now + (homeId ? MqttService.HOME_TTL_MS : MqttService.MISS_TTL_MS),
+    });
+    return homeId;
+  }
 
   connect() {
     if (!config.MQTT_URL) {
@@ -78,20 +98,20 @@ export class MqttService {
   private async handleMessage(topic: string, payload: string) {
     try {
       const message = parseTopicMessage(topic, payload);
-      const home = await this.repository.findHomeByDeviceId(message.data.deviceId);
-      if (!home) {
+      const homeId = await this.resolveHomeId(message.data.deviceId);
+      if (!homeId) {
         console.warn(`Dispositivo sem residência vinculada: ${message.data.deviceId}`);
         return;
       }
 
       if (message.kind === "state") {
-        await this.repository.saveState(home.id, message.data);
+        await this.repository.saveState(homeId, message.data);
       } else if (message.kind === "availability") {
-        await this.repository.saveAvailability(home.id, message.data);
+        await this.repository.saveAvailability(homeId, message.data);
       } else if (message.kind === "commandAck") {
         await this.repository.acknowledgeCommand(message.data);
       } else {
-        await this.handleEvent(home.id, message.data);
+        await this.handleEvent(homeId, message.data);
       }
     } catch (error) {
       console.error("Mensagem MQTT inválida:", error);
