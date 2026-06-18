@@ -145,15 +145,18 @@ export class Repository {
     if (this.firestore) {
       const [stateDoc, eventDocs] = await Promise.all([
         this.firestore.collection("alarmStates").doc(homeId).get(),
+        // Sem orderBy no Firestore para não exigir índice composto;
+        // ordenamos em memória (occurredAt é ISO 8601, ordena como string).
         this.firestore
           .collection("events")
           .where("homeId", "==", homeId)
-          .orderBy("occurredAt", "desc")
-          .limit(10)
           .get(),
       ]);
       state = stateDoc.exists ? (stateDoc.data() as AlarmState) : undefined;
-      events = eventDocs.docs.map((doc) => doc.data() as AlarmEvent);
+      events = eventDocs.docs
+        .map((doc) => doc.data() as AlarmEvent)
+        .sort((a, b) => (a.occurredAt < b.occurredAt ? 1 : -1))
+        .slice(0, 10);
     } else {
       state = this.states.get(homeId);
       events = (this.events.get(homeId) ?? []).slice(0, 10);
@@ -220,10 +223,10 @@ export class Repository {
       const snapshot = await this.firestore
         .collection("events")
         .where("homeId", "==", homeId)
-        .orderBy("occurredAt", "desc")
-        .limit(500)
         .get();
-      events = snapshot.docs.map((doc) => doc.data() as AlarmEvent);
+      events = snapshot.docs
+        .map((doc) => doc.data() as AlarmEvent)
+        .sort((a, b) => (a.occurredAt < b.occurredAt ? 1 : -1));
     } else {
       events = this.events.get(homeId) ?? [];
     }
