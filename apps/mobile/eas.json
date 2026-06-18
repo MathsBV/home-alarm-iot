@@ -15,6 +15,17 @@
       "distribution": "internal",
       "android": {
         "buildType": "apk"
+      },
+      "env": {
+        "EXPO_PUBLIC_API_URL": "https://home-alarm-gateway.onrender.com",
+        "EXPO_PUBLIC_FIREBASE_API_KEY": "AIzaSyDXo37PCpj-WiQYZGFWxvYvuqWMJPAQ3z0",
+        "EXPO_PUBLIC_FIREBASE_AUTH_DOMAIN": "home-alarm-proj-embarc.firebaseapp.com",
+        "EXPO_PUBLIC_FIREBASE_PROJECT_ID": "home-alarm-proj-embarc",
+        "EXPO_PUBLIC_FIREBASE_STORAGE_BUCKET": "home-alarm-proj-embarc.firebasestorage.app",
+        "EXPO_PUBLIC_FIREBASE_MESSAGING_SENDER_ID": "724613239910",
+        "EXPO_PUBLIC_FIREBASE_APP_ID": "1:724613239910:web:da57ba3bc03008f89989a7",
+        "EXPO_PUBLIC_DEMO_MODE": "false",
+        "EXPO_PUBLIC_DEMO_HOME_ID": "home-demo-001"
       }
     },
     "production": {
