@@ -173,7 +173,7 @@ export function apiRoutes(repository: Repository, mqttService: MqttService) {
   return router;
 }
 
-function eventsToCsv(events: AlarmEvent[]) {
+export function eventsToCsv(events: AlarmEvent[]) {
   const escape = (value: unknown) => `"${String(value ?? "").replaceAll('"', '""')}"`;
   const header = ["eventId", "occurredAt", "deviceId", "type", "zoneId", "severity", "title", "description"];
   return [

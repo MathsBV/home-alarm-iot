@@ -17,6 +17,7 @@ const envSchema = z.object({
   FIREBASE_CLIENT_EMAIL: z.string().optional(),
   FIREBASE_PRIVATE_KEY: z.string().optional(),
   EXPO_ACCESS_TOKEN: z.string().optional(),
+  POWERBI_API_KEY: z.string().optional(),
   RESEND_API_KEY: z.string().optional(),
   RESEND_FROM: z.string().default("Alarme Residencial <onboarding@resend.dev>"),
   TWILIO_ACCOUNT_SID: z.string().optional(),

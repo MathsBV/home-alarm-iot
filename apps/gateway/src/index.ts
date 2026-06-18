@@ -9,6 +9,7 @@ import { getFirebaseServices } from "./firebase.js";
 import { MqttService } from "./mqtt-service.js";
 import { Repository } from "./repository.js";
 import { apiRoutes } from "./routes.js";
+import { biRoutes } from "./bi-routes.js";
 
 const firebase = getFirebaseServices();
 const repository = new Repository(firebase?.firestore ?? null);
@@ -39,6 +40,9 @@ app.get("/health", (_request, response) => {
     timestamp: new Date().toISOString(),
   });
 });
+
+// Exportação para BI: autenticada por API key própria, fora do login Firebase.
+app.use("/bi", biRoutes(repository));
 
 app.use("/api", authMiddleware(firebase?.auth ?? null), apiRoutes(repository, mqttService));
 
