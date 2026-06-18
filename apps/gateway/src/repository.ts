@@ -33,15 +33,16 @@ function demoState(): AlarmState {
     delaySeconds: 30,
     triggerCount: 0,
     zones: [
-      { id: 1, name: "Porta de entrada", sensorType: "Reed switch", violated: false },
-      { id: 2, name: "Sala", sensorType: "PIR", violated: false },
-      { id: 3, name: "Garagem", sensorType: "Ultrassom", violated: false },
-      { id: 4, name: "Corredor", sensorType: "Infravermelho", violated: false },
-      { id: 5, name: "Quintal", sensorType: "Laser", violated: false },
+      { id: 1, name: "Porta Principal", sensorType: "Reed Switch", violated: false },
+      { id: 2, name: "Janela", sensorType: "Reed Switch", violated: false },
+      { id: 3, name: "Sala", sensorType: "PIR + Ultrassonico", violated: false },
+      { id: 4, name: "Corredor", sensorType: "IR", violated: false },
+      { id: 5, name: "Garagem", sensorType: "Ultrassonico", violated: false },
     ],
     countermeasures: [
-      { id: "strobe", name: "Luz estroboscópica", active: false },
-      { id: "fog", name: "Gerador de névoa", active: false },
+      { id: "sirene", name: "Sirene", active: false },
+      { id: "estrobo", name: "Estrobo", active: false },
+      { id: "cerca", name: "Cerca Eletrica", active: false },
     ],
   };
 }
@@ -162,10 +163,12 @@ export class Repository {
       events = (this.events.get(homeId) ?? []).slice(0, 10);
     }
 
-    if (!state) state = { ...demoState(), deviceId: home.deviceId, online: false };
+    // Garante um estado completo mesmo se o documento estiver parcial
+    // (ex.: só chegou availability, sem um state completo do dispositivo).
+    const base: AlarmState = { ...demoState(), deviceId: home.deviceId, online: false };
     return {
       home: { id: home.id, name: home.name, deviceId: home.deviceId },
-      state,
+      state: state ? { ...base, ...state } : base,
       recentEvents: events,
     };
   }
